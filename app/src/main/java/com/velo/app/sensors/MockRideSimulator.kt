@@ -1,0 +1,98 @@
+package com.velo.app.sensors
+
+import com.velo.app.model.RideTelemetry
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlin.math.sin
+
+/**
+ * Built-in simulator engine allowing end-to-end testing of real-time speed morphing,
+ * heart rate zones, elevation gain, power, and cadence on the Android Emulator without
+ * physical bike sensors.
+ */
+class MockRideSimulator(private val scope: CoroutineScope) {
+
+    private val _telemetry = MutableStateFlow(
+        RideTelemetry(
+            speedKmh = 33.3f,
+            heartRateBpm = 140,
+            distanceMeters = 27000.0,
+            elapsedTimeSeconds = 2609L,
+            cadenceRpm = 88,
+            avgSpeedKmh = 28.4f,
+            elevationGainMeters = 320f,
+            powerWatts = 210,
+            isGpsActive = true,
+            isWearOsConnected = true
+        )
+    )
+    val telemetry: StateFlow<RideTelemetry> = _telemetry.asStateFlow()
+
+    private var simulationJob: Job? = null
+    private var tick = 0
+
+    fun start() {
+        if (simulationJob?.isActive == true) return
+
+        simulationJob = scope.launch {
+            while (isActive) {
+                delay(1000L) // Throttled to 1Hz battery-saving update rate
+                tick++
+
+                // Create realistic smooth cycling dynamics
+                val speedWave = (sin(tick * 0.08) * 12.0).toFloat()
+                val currentSpeed = (32.0f + speedWave).coerceAtLeast(0.0f)
+
+                // Alternate HR through zones (Warmup -> Aerobic -> Cardio -> Peak)
+                val hrWave = (sin(tick * 0.05) * 35).toInt()
+                val currentHr = (135 + hrWave).coerceIn(90, 185)
+
+                val prev = _telemetry.value
+                val newDistance = prev.distanceMeters + (currentSpeed / 3.6)
+                val newElapsed = prev.elapsedTimeSeconds + 1
+                val newElevation = prev.elevationGainMeters + if (tick % 5 == 0) 1.0f else 0.0f
+                val newPower = (180 + (sin(tick * 0.1) * 60).toInt()).coerceAtLeast(0)
+                val newCadence = (85 + (sin(tick * 0.07) * 10).toInt()).coerceIn(60, 110)
+
+                _telemetry.value = prev.copy(
+                    speedKmh = currentSpeed,
+                    heartRateBpm = currentHr,
+                    distanceMeters = newDistance,
+                    elapsedTimeSeconds = newElapsed,
+                    cadenceRpm = newCadence,
+                    avgSpeedKmh = ((newDistance / 1000.0) / (newElapsed / 3600.0)).toFloat(),
+                    elevationGainMeters = newElevation,
+                    powerWatts = newPower,
+                    isGpsActive = true,
+                    isWearOsConnected = true
+                )
+            }
+        }
+    }
+
+    fun stop() {
+        simulationJob?.cancel()
+        simulationJob = null
+    }
+
+    fun reset() {
+        _telemetry.value = RideTelemetry(
+            speedKmh = 0.0f,
+            heartRateBpm = 0,
+            distanceMeters = 0.0,
+            elapsedTimeSeconds = 0L,
+            cadenceRpm = 0,
+            avgSpeedKmh = 0.0f,
+            elevationGainMeters = 0.0f,
+            powerWatts = 0,
+            isGpsActive = true,
+            isWearOsConnected = true
+        )
+    }
+}
