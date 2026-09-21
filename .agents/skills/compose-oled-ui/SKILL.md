@@ -56,21 +56,50 @@ When using continuous parametric variable fonts (such as Google Fonts' **Roboto 
 
 ---
 
-## 4. On-Device Emulator Verification Workflow
+## 4. Zero-Border Modal Dialogs & Sheets
 
-Run the following commands to verify UI state and layout stability on the Android emulator:
+1. **True OLED Dialog Surface**:
+   - Set `containerColor = Color(0xFF141416)` or `#1E1E20` for high contrast against `#000000`.
+   - Set `tonalElevation = 0.dp` to prevent Material 3 from applying unwanted tinting.
+   - Do not apply `border(...)` modifier under any circumstance.
+2. **Action Affordances**:
+   - Primary actions (e.g. Connect): Full accent color (e.g. `#FF4081` Pink) with dark text (`#000000`).
+   - Secondary / Dismiss actions: Low-opacity circular touch targets (e.g. `IconButton` with close icon).
+
+---
+
+## 5. On-Device Emulator & UI Verification Workflow
+
+When running UI automation and verification on Android emulators:
 
 1. **Install and Launch App**:
    ```bash
    adb install -r app/build/outputs/apk/debug/app-debug.apk
-   adb shell am start -n <package>/<activity>
+   adb shell am start -n com.velo.app/.MainActivity
    ```
 
-2. **Capture and Inspect Pixel-Perfect Screenshot**:
-   ```bash
-   adb exec-out screencap -p > /tmp/screen_capture.png
-   ```
+2. **Reliable Pixel-Perfect Screencap (Preventing Stream Stalls)**:
+   - Avoid shell pipe redirection (`adb exec-out screencap -p > ...`) in subshells as stdout buffering can stall indefinitely.
+   - Use Python binary pipe execution:
+     ```python
+     import subprocess
+     with open('/path/to/capture.png', 'wb') as f:
+         subprocess.run(['adb', 'exec-out', 'screencap', '-p'], stdout=f, check=True)
+     ```
 
-3. **Simulate User Gestures**:
-   - Swipe left to settings: `adb shell input swipe 900 1200 100 1200 250`
-   - Tap buttons: `adb shell input tap <X> <Y>`
+3. **Gesture Navigation vs Pager Swipe Tuning**:
+   - Gestures starting near screen edges ($X > 930$ or $X < 70$ on a 1080px display) trigger Android system back/navigation gestures.
+   - Swipes with duration $< 200\text{ms}$ risk being registered as taps or flings before drag slop threshold is met.
+   - **Recommended Pager Swipe**:
+     ```bash
+     adb shell input swipe 800 1200 100 1200 350
+     ```
+
+4. **UI Inspection via UIAutomator Dump**:
+   - Retrieve screen hierarchy and exact interactive node bounds:
+     ```bash
+     adb shell uiautomator dump /sdcard/window_dump.xml
+     adb exec-out cat /sdcard/window_dump.xml
+     ```
+   - Tap center of bounds $[x_1, y_1][x_2, y_2]$: $((x_1 + x_2) / 2, (y_1 + y_2) / 2)$.
+

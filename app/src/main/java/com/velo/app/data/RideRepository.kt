@@ -59,13 +59,20 @@ class DefaultRideRepository(
     )
 
     private val _useSimulator = MutableStateFlow(true)
+    private val _pairedSensors = MutableStateFlow<Set<com.velo.app.sensors.SensorType>>(emptySet())
 
     override val telemetry: StateFlow<RideTelemetry> = combine(
         _useSimulator,
         simulator.telemetry,
-        _realTelemetry
-    ) { useSim, simData, realData ->
-        if (useSim) simData else realData
+        _realTelemetry,
+        _pairedSensors
+    ) { useSim, simData, realData, paired ->
+        val base = if (useSim) simData else realData
+        base.copy(
+            isBleCadenceConnected = paired.contains(com.velo.app.sensors.SensorType.CADENCE_SPEED) || base.isBleCadenceConnected,
+            isBlePowerConnected = paired.contains(com.velo.app.sensors.SensorType.POWER) || base.isBlePowerConnected,
+            isWearOsConnected = paired.contains(com.velo.app.sensors.SensorType.HEART_RATE) || base.isWearOsConnected
+        )
     }.stateIn(
         scope = scope,
         started = SharingStarted.Eagerly,
@@ -199,6 +206,7 @@ class DefaultRideRepository(
 
     override fun pairSensor(sensor: com.velo.app.sensors.DiscoveredSensor) {
         // Mark sensor as paired & connected in telemetry
+        _pairedSensors.value = _pairedSensors.value + sensor.type
         val current = _realTelemetry.value
         _realTelemetry.value = when (sensor.type) {
             com.velo.app.sensors.SensorType.CADENCE_SPEED -> current.copy(isBleCadenceConnected = true)
