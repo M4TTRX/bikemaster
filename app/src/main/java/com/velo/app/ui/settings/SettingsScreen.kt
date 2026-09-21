@@ -35,6 +35,10 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -61,10 +65,31 @@ fun SettingsScreen(
     onMockSimulatorChange: (Boolean) -> Unit,
     isKeepScreenOn: Boolean,
     onKeepScreenOnChange: (Boolean) -> Unit,
+    discoveredSensors: List<com.velo.app.sensors.DiscoveredSensor>,
+    isScanning: Boolean,
+    onStartScan: (com.velo.app.sensors.SensorType) -> Unit,
+    onPairSensor: (com.velo.app.sensors.DiscoveredSensor) -> Unit,
+    isCadenceConnected: Boolean,
+    isPowerConnected: Boolean,
+    isHeartRateConnected: Boolean,
     onBackClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val scrollState = rememberScrollState()
+    var pairingDialogType by remember { mutableStateOf<com.velo.app.sensors.SensorType?>(null) }
+
+    pairingDialogType?.let { type ->
+        SensorPairingDialog(
+            sensorType = type,
+            discoveredSensors = discoveredSensors.filter { it.type == type },
+            isScanning = isScanning,
+            onSensorSelected = { sensor ->
+                onPairSensor(sensor)
+                pairingDialogType = null
+            },
+            onDismiss = { pairingDialogType = null }
+        )
+    }
 
     Column(
         modifier = modifier
@@ -129,22 +154,34 @@ fun SettingsScreen(
             SettingsSensorItem(
                 icon = Icons.Default.Watch,
                 title = "Heart Rate Monitor",
-                subtitle = "Wear OS Smartwatch (Active)",
-                isConnected = true
+                subtitle = if (isHeartRateConnected) "Wear OS Smartwatch (Active)" else "Wear OS / BLE HRM (Ready to pair)",
+                isConnected = isHeartRateConnected,
+                onPairClick = {
+                    onStartScan(com.velo.app.sensors.SensorType.HEART_RATE)
+                    pairingDialogType = com.velo.app.sensors.SensorType.HEART_RATE
+                }
             )
             HorizontalDivider(color = SettingsDividerGrey, thickness = 1.dp)
             SettingsSensorItem(
                 icon = Icons.AutoMirrored.Filled.DirectionsBike,
                 title = "Cadence & Speed (CSC)",
-                subtitle = "BLE Sensor (Ready to pair)",
-                isConnected = false
+                subtitle = if (isCadenceConnected) "BLE Sensor (Active)" else "BLE Sensor (Ready to pair)",
+                isConnected = isCadenceConnected,
+                onPairClick = {
+                    onStartScan(com.velo.app.sensors.SensorType.CADENCE_SPEED)
+                    pairingDialogType = com.velo.app.sensors.SensorType.CADENCE_SPEED
+                }
             )
             HorizontalDivider(color = SettingsDividerGrey, thickness = 1.dp)
             SettingsSensorItem(
                 icon = Icons.Default.Speed,
                 title = "Cycling Power Meter",
-                subtitle = "BLE Power 0x1818 (Ready to pair)",
-                isConnected = false
+                subtitle = if (isPowerConnected) "BLE Power (Active)" else "BLE Power 0x1818 (Ready to pair)",
+                isConnected = isPowerConnected,
+                onPairClick = {
+                    onStartScan(com.velo.app.sensors.SensorType.POWER)
+                    pairingDialogType = com.velo.app.sensors.SensorType.POWER
+                }
             )
         }
 
@@ -250,12 +287,13 @@ private fun SettingsSensorItem(
     icon: ImageVector,
     title: String,
     subtitle: String,
-    isConnected: Boolean
+    isConnected: Boolean,
+    onPairClick: () -> Unit
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { /* Pair dialog / scanning */ }
+            .clickable(onClick = onPairClick)
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -295,6 +333,7 @@ private fun SettingsSensorItem(
             modifier = Modifier
                 .clip(CircleShape)
                 .background(if (isConnected) BtnNeutralGrey else BtnFinishPink)
+                .clickable(onClick = onPairClick)
                 .padding(horizontal = 12.dp, vertical = 6.dp)
         ) {
             Text(

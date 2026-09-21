@@ -27,6 +27,10 @@ fun MainScreen(
     onUnitSystemChange: (UnitSystem) -> Unit,
     onMockSimulatorChange: (Boolean) -> Unit,
     onKeepScreenOnChange: (Boolean) -> Unit,
+    discoveredSensors: List<com.velo.app.sensors.DiscoveredSensor>,
+    isScanning: Boolean,
+    onStartScan: (com.velo.app.sensors.SensorType) -> Unit,
+    onPairSensor: (com.velo.app.sensors.DiscoveredSensor) -> Unit,
     onPauseClick: () -> Unit,
     onResumeClick: () -> Unit,
     onFinishClick: () -> Unit,
@@ -57,6 +61,13 @@ fun MainScreen(
                 onMockSimulatorChange = onMockSimulatorChange,
                 isKeepScreenOn = isKeepScreenOn,
                 onKeepScreenOnChange = onKeepScreenOnChange,
+                discoveredSensors = discoveredSensors,
+                isScanning = isScanning,
+                onStartScan = onStartScan,
+                onPairSensor = onPairSensor,
+                isCadenceConnected = telemetry.isBleCadenceConnected,
+                isPowerConnected = telemetry.isBlePowerConnected,
+                isHeartRateConnected = telemetry.isWearOsConnected,
                 onBackClick = {
                     coroutineScope.launch {
                         pagerState.animateScrollToPage(0)

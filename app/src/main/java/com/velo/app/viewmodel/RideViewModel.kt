@@ -32,6 +32,20 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
 
     val rideStatus: StateFlow<RideStatus> = rideRepository.rideStatus
     val telemetry: StateFlow<RideTelemetry> = rideRepository.telemetry
+    val discoveredSensors: StateFlow<List<com.velo.app.sensors.DiscoveredSensor>> = rideRepository.discoveredSensors
+    val isScanning: StateFlow<Boolean> = rideRepository.isScanning
+
+    fun startSensorScan(type: com.velo.app.sensors.SensorType) {
+        rideRepository.startSensorScan(type)
+    }
+
+    fun stopSensorScan() {
+        rideRepository.stopSensorScan()
+    }
+
+    fun pairSensor(sensor: com.velo.app.sensors.DiscoveredSensor) {
+        rideRepository.pairSensor(sensor)
+    }
 
     init {
         // Automatically start the foreground service on initial launch

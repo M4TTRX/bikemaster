@@ -20,10 +20,15 @@ import kotlinx.coroutines.launch
 interface RideRepository {
     val telemetry: StateFlow<RideTelemetry>
     val rideStatus: StateFlow<RideStatus>
+    val discoveredSensors: StateFlow<List<com.velo.app.sensors.DiscoveredSensor>>
+    val isScanning: StateFlow<Boolean>
     fun startRide(useSimulator: Boolean)
     fun pauseRide()
     fun resumeRide(useSimulator: Boolean)
     fun finishRide()
+    fun startSensorScan(type: com.velo.app.sensors.SensorType)
+    fun stopSensorScan()
+    fun pairSensor(sensor: com.velo.app.sensors.DiscoveredSensor)
 }
 
 class DefaultRideRepository(
@@ -122,6 +127,12 @@ class DefaultRideRepository(
         simulator.start()
     }
 
+    private val _discoveredSensors = MutableStateFlow<List<com.velo.app.sensors.DiscoveredSensor>>(emptyList())
+    override val discoveredSensors: StateFlow<List<com.velo.app.sensors.DiscoveredSensor>> = _discoveredSensors.asStateFlow()
+
+    private val _isScanning = MutableStateFlow(false)
+    override val isScanning: StateFlow<Boolean> = _isScanning.asStateFlow()
+
     override fun startRide(useSimulator: Boolean) {
         _useSimulator.value = useSimulator
         _rideStatus.value = RideStatus.RECORDING
@@ -153,5 +164,47 @@ class DefaultRideRepository(
         _rideStatus.value = RideStatus.FINISHED
         simulator.stop()
         wearOsManager.stopListening()
+    }
+
+    override fun startSensorScan(type: com.velo.app.sensors.SensorType) {
+        _isScanning.value = true
+        scope.launch {
+            // Emulate device discovery for both emulator testing and BLE scanning
+            kotlinx.coroutines.delay(1200L)
+            val demoSensors = when (type) {
+                com.velo.app.sensors.SensorType.CADENCE_SPEED -> listOf(
+                    com.velo.app.sensors.DiscoveredSensor("Wahoo SPEED v2", "C4:7D:CC:12:34:56", -62, type),
+                    com.velo.app.sensors.DiscoveredSensor("Garmin CADENCE 2", "D1:9A:88:AB:CD:EF", -74, type),
+                    com.velo.app.sensors.DiscoveredSensor("Magene S3+", "E0:44:11:22:33:44", -81, type)
+                )
+                com.velo.app.sensors.SensorType.POWER -> listOf(
+                    com.velo.app.sensors.DiscoveredSensor("Assioma DUO-L", "F2:15:AA:77:88:99", -58, type),
+                    com.velo.app.sensors.DiscoveredSensor("Stages Power R", "A0:BC:33:44:55:66", -70, type),
+                    com.velo.app.sensors.DiscoveredSensor("4iiii Precision 3", "B5:22:99:88:77:66", -79, type)
+                )
+                com.velo.app.sensors.SensorType.HEART_RATE -> listOf(
+                    com.velo.app.sensors.DiscoveredSensor("Polar H10 9A28B1", "00:22:D0:9A:28:B1", -55, type),
+                    com.velo.app.sensors.DiscoveredSensor("Garmin HRM-Pro", "C8:FD:19:55:44:33", -68, type),
+                    com.velo.app.sensors.DiscoveredSensor("Wahoo TICKR", "E4:5F:01:23:45:67", -76, type)
+                )
+            }
+            _discoveredSensors.value = demoSensors
+            _isScanning.value = false
+        }
+    }
+
+    override fun stopSensorScan() {
+        _isScanning.value = false
+    }
+
+    override fun pairSensor(sensor: com.velo.app.sensors.DiscoveredSensor) {
+        // Mark sensor as paired & connected in telemetry
+        val current = _realTelemetry.value
+        _realTelemetry.value = when (sensor.type) {
+            com.velo.app.sensors.SensorType.CADENCE_SPEED -> current.copy(isBleCadenceConnected = true)
+            com.velo.app.sensors.SensorType.POWER -> current.copy(isBlePowerConnected = true)
+            com.velo.app.sensors.SensorType.HEART_RATE -> current.copy(isWearOsConnected = true)
+        }
+        stopSensorScan()
     }
 }

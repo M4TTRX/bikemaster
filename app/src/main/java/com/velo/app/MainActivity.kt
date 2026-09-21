@@ -28,6 +28,8 @@ class MainActivity : ComponentActivity() {
                 val rideStatus by viewModel.rideStatus.collectAsStateWithLifecycle()
                 val isMockSimulatorEnabled by viewModel.isMockSimulatorEnabled.collectAsStateWithLifecycle()
                 val isKeepScreenOn by viewModel.isKeepScreenOn.collectAsStateWithLifecycle()
+                val discoveredSensors by viewModel.discoveredSensors.collectAsStateWithLifecycle()
+                val isScanning by viewModel.isScanning.collectAsStateWithLifecycle()
 
                 DisposableEffect(isKeepScreenOn) {
                     if (isKeepScreenOn) {
@@ -46,6 +48,10 @@ class MainActivity : ComponentActivity() {
                     rideStatus = rideStatus,
                     isMockSimulatorEnabled = isMockSimulatorEnabled,
                     isKeepScreenOn = isKeepScreenOn,
+                    discoveredSensors = discoveredSensors,
+                    isScanning = isScanning,
+                    onStartScan = viewModel::startSensorScan,
+                    onPairSensor = viewModel::pairSensor,
                     onUnitSystemChange = viewModel::onUnitSystemChange,
                     onMockSimulatorChange = viewModel::onMockSimulatorChange,
                     onKeepScreenOnChange = viewModel::onKeepScreenOnChange,
