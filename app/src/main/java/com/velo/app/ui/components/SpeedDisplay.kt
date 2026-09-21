@@ -21,8 +21,8 @@ fun SpeedDisplay(
     unitSystem: UnitSystem,
     modifier: Modifier = Modifier
 ) {
-    // Dynamic continuous variable width and font size based on digit count
-    val formattedSpeed = String.format(Locale.US, "%.1f", speedValue)
+    val displaySpeed = if (unitSystem == UnitSystem.METRIC) speedValue else speedValue * 0.621371f
+    val formattedSpeed = String.format(Locale.US, "%.1f", displaySpeed)
     val integerPart = formattedSpeed.substringBefore(".")
     val numDigits = integerPart.length
 

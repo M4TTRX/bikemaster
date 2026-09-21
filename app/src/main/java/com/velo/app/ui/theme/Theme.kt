@@ -26,22 +26,27 @@ val RobotoFlexFontFamily = FontFamily(
     Font(R.font.roboto_flex)
 )
 
+private val fontCache = mutableMapOf<Pair<Float, Int>, FontFamily>()
+
 /**
- * Helper to dynamically create a Roboto Flex font style with continuous variable axes:
+ * Helper to dynamically create and cache a Roboto Flex font style with continuous variable axes:
  * - wdth: width axis (25 to 151)
  * - wght: weight axis (100 to 1000)
  */
 @OptIn(ExperimentalTextApi::class)
 fun getRobotoFlexFont(width: Float = 100f, weight: Int = 400): FontFamily {
-    return FontFamily(
-        Font(
-            resId = R.font.roboto_flex,
-            variationSettings = FontVariation.Settings(
-                FontVariation.width(width),
-                FontVariation.weight(weight)
+    val key = Pair(width, weight)
+    return fontCache.getOrPut(key) {
+        FontFamily(
+            Font(
+                resId = R.font.roboto_flex,
+                variationSettings = FontVariation.Settings(
+                    FontVariation.width(width),
+                    FontVariation.weight(weight)
+                )
             )
         )
-    )
+    }
 }
 
 @Composable

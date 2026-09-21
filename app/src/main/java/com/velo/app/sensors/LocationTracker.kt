@@ -21,9 +21,9 @@ class LocationTracker(private val context: Context) {
 
     @SuppressLint("MissingPermission")
     fun getLocationFlow(): Flow<Location> = callbackFlow {
-        val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 1000L)
-            .setMinUpdateIntervalMillis(500L)
-            .setMinUpdateDistanceMeters(0.5f)
+        val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 1500L)
+            .setMinUpdateIntervalMillis(1000L)
+            .setMinUpdateDistanceMeters(1.5f)
             .build()
 
         val locationCallback = object : LocationCallback() {

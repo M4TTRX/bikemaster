@@ -53,17 +53,43 @@ class BleSensorManager(context: Context) : BleManager(context) {
             return cscCharacteristic != null || powerCharacteristic != null || hrmCharacteristic != null
         }
 
+        private var lastCrankRevs: Int? = null
+        private var lastCrankTime: Int? = null
+
         override fun initialize() {
             cscCharacteristic?.let { char ->
                 setNotificationCallback(char).with { _, data ->
-                    // Parse CSC cadence
-                    if (data.size() >= 5) {
-                        val flags = data.getIntValue(BluetoothGattCharacteristic.FORMAT_UINT8, 0) ?: 0
+                    val rawBytes = data.value
+                    if (rawBytes != null && rawBytes.isNotEmpty()) {
+                        val flags = rawBytes[0].toInt() and 0xFF
+                        val hasWheel = (flags and 0x01) != 0
                         val hasCrank = (flags and 0x02) != 0
-                        if (hasCrank) {
-                            val crankRevs = data.getIntValue(BluetoothGattCharacteristic.FORMAT_UINT16, 1) ?: 0
-                            // Instantaneous cadence approximation
-                            _cadenceFlow.value = (crankRevs % 120).coerceIn(40, 140)
+
+                        var offset = 1
+                        if (hasWheel) {
+                            offset += 6 // 4 bytes wheel revs + 2 bytes wheel event time
+                        }
+
+                        if (hasCrank && rawBytes.size >= offset + 4) {
+                            val crankRevs = (rawBytes[offset].toInt() and 0xFF) or
+                                    ((rawBytes[offset + 1].toInt() and 0xFF) shl 8)
+                            val crankTime = (rawBytes[offset + 2].toInt() and 0xFF) or
+                                    ((rawBytes[offset + 3].toInt() and 0xFF) shl 8)
+
+                            val prevRevs = lastCrankRevs
+                            val prevTime = lastCrankTime
+
+                            if (prevRevs != null && prevTime != null) {
+                                val dRevs = (crankRevs - prevRevs) and 0xFFFF
+                                val dTime = (crankTime - prevTime) and 0xFFFF
+                                if (dTime > 0 && dRevs >= 0) {
+                                    // 1024 ticks per second
+                                    val rpm = ((dRevs.toDouble() / (dTime.toDouble() / 1024.0)) * 60.0).toInt()
+                                    _cadenceFlow.value = rpm.coerceIn(0, 220)
+                                }
+                            }
+                            lastCrankRevs = crankRevs
+                            lastCrankTime = crankTime
                         }
                     }
                 }
@@ -72,9 +98,10 @@ class BleSensorManager(context: Context) : BleManager(context) {
 
             powerCharacteristic?.let { char ->
                 setNotificationCallback(char).with { _, data ->
-                    if (data.size() >= 4) {
-                        val instantaneousPower = data.getIntValue(BluetoothGattCharacteristic.FORMAT_SINT16, 2) ?: 0
-                        _powerFlow.value = instantaneousPower.coerceAtLeast(0)
+                    val rawBytes = data.value
+                    if (rawBytes != null && rawBytes.size >= 4) {
+                        val power = (rawBytes[2].toInt() and 0xFF) or (rawBytes[3].toInt() shl 8)
+                        _powerFlow.value = power.coerceAtLeast(0)
                     }
                 }
                 enableNotifications(char).enqueue()
@@ -82,15 +109,16 @@ class BleSensorManager(context: Context) : BleManager(context) {
 
             hrmCharacteristic?.let { char ->
                 setNotificationCallback(char).with { _, data ->
-                    if (data.size() >= 2) {
-                        val flags = data.getIntValue(BluetoothGattCharacteristic.FORMAT_UINT8, 0) ?: 0
-                        val format = if ((flags and 0x01) == 0) {
-                            BluetoothGattCharacteristic.FORMAT_UINT8
+                    val rawBytes = data.value
+                    if (rawBytes != null && rawBytes.size >= 2) {
+                        val flags = rawBytes[0].toInt() and 0xFF
+                        val is16Bit = (flags and 0x01) != 0
+                        val hr = if (is16Bit && rawBytes.size >= 3) {
+                            (rawBytes[1].toInt() and 0xFF) or ((rawBytes[2].toInt() and 0xFF) shl 8)
                         } else {
-                            BluetoothGattCharacteristic.FORMAT_UINT16
+                            rawBytes[1].toInt() and 0xFF
                         }
-                        val heartRate = data.getIntValue(format, 1) ?: 0
-                        _heartRateFlow.value = heartRate
+                        _heartRateFlow.value = hr
                     }
                 }
                 enableNotifications(char).enqueue()
@@ -101,6 +129,11 @@ class BleSensorManager(context: Context) : BleManager(context) {
             cscCharacteristic = null
             powerCharacteristic = null
             hrmCharacteristic = null
+            lastCrankRevs = null
+            lastCrankTime = null
+            _cadenceFlow.value = 0
+            _powerFlow.value = 0
+            _heartRateFlow.value = 0
         }
     }
 }

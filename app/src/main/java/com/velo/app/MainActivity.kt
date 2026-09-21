@@ -6,8 +6,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
-import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.velo.app.ui.MainScreen
 import com.velo.app.ui.theme.VeloTheme
 import com.velo.app.viewmodel.RideViewModel
@@ -22,16 +23,21 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             VeloTheme {
-                val telemetry by viewModel.telemetry.collectAsState()
-                val unitSystem by viewModel.unitSystem.collectAsState()
-                val rideStatus by viewModel.rideStatus.collectAsState()
-                val isMockSimulatorEnabled by viewModel.isMockSimulatorEnabled.collectAsState()
-                val isKeepScreenOn by viewModel.isKeepScreenOn.collectAsState()
+                val telemetry by viewModel.telemetry.collectAsStateWithLifecycle()
+                val unitSystem by viewModel.unitSystem.collectAsStateWithLifecycle()
+                val rideStatus by viewModel.rideStatus.collectAsStateWithLifecycle()
+                val isMockSimulatorEnabled by viewModel.isMockSimulatorEnabled.collectAsStateWithLifecycle()
+                val isKeepScreenOn by viewModel.isKeepScreenOn.collectAsStateWithLifecycle()
 
-                if (isKeepScreenOn) {
-                    window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                } else {
-                    window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                DisposableEffect(isKeepScreenOn) {
+                    if (isKeepScreenOn) {
+                        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    } else {
+                        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    }
+                    onDispose {
+                        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    }
                 }
 
                 MainScreen(
