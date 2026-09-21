@@ -1,10 +1,13 @@
 package com.velo.app
 
+import android.Manifest
+import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -17,9 +20,29 @@ class MainActivity : ComponentActivity() {
 
     private val viewModel: RideViewModel by viewModels()
 
+    private val permissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) {
+        // Permissions granted/denied handled gracefully by service & location tracker
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        val permissionsToRequest = mutableListOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        ).apply {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                add(Manifest.permission.BLUETOOTH_SCAN)
+                add(Manifest.permission.BLUETOOTH_CONNECT)
+            }
+        }
+        permissionLauncher.launch(permissionsToRequest.toTypedArray())
 
         setContent {
             VeloTheme {
@@ -50,14 +73,14 @@ class MainActivity : ComponentActivity() {
                     isKeepScreenOn = isKeepScreenOn,
                     discoveredSensors = discoveredSensors,
                     isScanning = isScanning,
-                    onStartScan = viewModel::startSensorScan,
-                    onPairSensor = viewModel::pairSensor,
-                    onUnitSystemChange = viewModel::onUnitSystemChange,
-                    onMockSimulatorChange = viewModel::onMockSimulatorChange,
-                    onKeepScreenOnChange = viewModel::onKeepScreenOnChange,
-                    onPauseClick = viewModel::onPauseClick,
-                    onResumeClick = viewModel::onResumeClick,
-                    onFinishClick = viewModel::onFinishClick
+                    onStartScan = { viewModel.startSensorScan(it) },
+                    onPairSensor = { viewModel.pairSensor(it) },
+                    onUnitSystemChange = { viewModel.onUnitSystemChange(it) },
+                    onMockSimulatorChange = { viewModel.onMockSimulatorChange(it) },
+                    onKeepScreenOnChange = { viewModel.onKeepScreenOnChange(it) },
+                    onPauseClick = { viewModel.onPauseClick() },
+                    onResumeClick = { viewModel.onResumeClick() },
+                    onFinishClick = { viewModel.onFinishClick() }
                 )
             }
         }

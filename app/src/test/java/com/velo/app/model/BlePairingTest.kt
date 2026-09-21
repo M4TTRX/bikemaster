@@ -26,7 +26,7 @@ class BlePairingTest {
 
     @Test
     fun testSensorTypeCoverage() {
-        val types = SensorType.values()
+        val types = SensorType.entries
         assertEquals(3, types.size)
         assertTrue(types.contains(SensorType.CADENCE_SPEED))
         assertTrue(types.contains(SensorType.POWER))

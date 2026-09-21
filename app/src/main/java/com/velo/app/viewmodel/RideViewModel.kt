@@ -47,10 +47,7 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
         rideRepository.pairSensor(sensor)
     }
 
-    init {
-        // Automatically start the foreground service on initial launch
-        sendServiceAction(RideTrackingService.ACTION_START)
-    }
+
 
     fun onPauseClick() {
         rideRepository.pauseRide()

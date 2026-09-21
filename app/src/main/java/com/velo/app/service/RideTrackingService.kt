@@ -45,8 +45,12 @@ class RideTrackingService : Service() {
 
                 try {
                     ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, serviceType)
-                } catch (e: Exception) {
-                    startForeground(NOTIFICATION_ID, notification)
+                } catch (e: Throwable) {
+                    try {
+                        startForeground(NOTIFICATION_ID, notification)
+                    } catch (e2: Throwable) {
+                        stopSelf()
+                    }
                 }
             }
             ACTION_PAUSE -> {

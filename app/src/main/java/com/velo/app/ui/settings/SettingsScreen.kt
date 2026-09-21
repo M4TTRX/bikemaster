@@ -79,9 +79,12 @@ fun SettingsScreen(
     var pairingDialogType by remember { mutableStateOf<com.velo.app.sensors.SensorType?>(null) }
 
     pairingDialogType?.let { type ->
+        val filteredSensors = remember(discoveredSensors, type) {
+            discoveredSensors.filter { it.type == type }
+        }
         SensorPairingDialog(
             sensorType = type,
-            discoveredSensors = discoveredSensors.filter { it.type == type },
+            discoveredSensors = filteredSensors,
             isScanning = isScanning,
             onSensorSelected = { sensor ->
                 onPairSensor(sensor)

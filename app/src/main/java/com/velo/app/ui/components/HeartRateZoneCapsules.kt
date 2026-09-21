@@ -31,6 +31,13 @@ import com.velo.app.ui.theme.HrZone3Cardio
 import com.velo.app.ui.theme.HrZone4Peak
 import com.velo.app.ui.theme.getRobotoFlexFont
 
+private val HrZoneList = listOf(
+    HeartRateZone.WARMUP to HrZone1Warmup,
+    HeartRateZone.AEROBIC to HrZone2Aerobic,
+    HeartRateZone.CARDIO to HrZone3Cardio,
+    HeartRateZone.PEAK to HrZone4Peak
+)
+
 @Composable
 fun HeartRateZoneCapsules(
     heartRateBpm: Int,
@@ -63,14 +70,7 @@ fun HeartRateZoneCapsules(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            val zones = listOf(
-                HeartRateZone.WARMUP to HrZone1Warmup,
-                HeartRateZone.AEROBIC to HrZone2Aerobic,
-                HeartRateZone.CARDIO to HrZone3Cardio,
-                HeartRateZone.PEAK to HrZone4Peak
-            )
-
-            zones.forEach { (z, targetColor) ->
+            HrZoneList.forEach { (z, targetColor) ->
                 val isCurrentZone = zone == z
                 val capsuleColor = if (isCurrentZone) targetColor else HrInactiveCapsule
 
