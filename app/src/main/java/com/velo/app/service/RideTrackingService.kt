@@ -13,6 +13,7 @@ import android.os.PowerManager
 import android.content.pm.ServiceInfo
 import androidx.core.app.ServiceCompat
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import com.velo.app.MainActivity
 
 class RideTrackingService : Service() {
@@ -37,15 +38,16 @@ class RideTrackingService : Service() {
             ACTION_START -> {
                 val notification = buildNotification("Recording Ride", "Speed: 0.0 km/h")
                 val serviceType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    var type = ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                        type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
-                    }
-                    type
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
                 } else {
                     0
                 }
-                ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, serviceType)
+
+                try {
+                    ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, serviceType)
+                } catch (e: Exception) {
+                    startForeground(NOTIFICATION_ID, notification)
+                }
             }
             ACTION_PAUSE -> {
                 val notification = buildNotification("Ride Paused", "Tap to resume")
