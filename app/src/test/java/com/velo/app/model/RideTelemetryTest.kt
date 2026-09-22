@@ -36,4 +36,26 @@ class RideTelemetryTest {
         assertEquals(10.0, distanceKm, 0.001)
         assertEquals(6.213, distanceMiles, 0.001)
     }
+
+    @Test
+    fun testSpeedSourceEnumValues() {
+        assertEquals("AUTO", SpeedSource.AUTO.name)
+        assertEquals("SPEED_SENSOR", SpeedSource.SPEED_SENSOR.name)
+        assertEquals("GPS", SpeedSource.GPS.name)
+        assertEquals("Auto (Sensor Priority)", SpeedSource.AUTO.title)
+    }
+
+    @Test
+    fun testRideTelemetryDefaults() {
+        val telemetry = RideTelemetry()
+        assertEquals(0.0f, telemetry.speedKmh, 0.001f)
+        assertEquals(0.0f, telemetry.maxSpeedKmh, 0.001f)
+        assertEquals(0, telemetry.heartRateBpm)
+        assertEquals(0.0, telemetry.distanceMeters, 0.001)
+        assertEquals(0L, telemetry.elapsedTimeSeconds)
+        assertEquals(0, telemetry.cadenceRpm)
+        assertEquals(0.0f, telemetry.avgSpeedKmh, 0.001f)
+        assertEquals(0.0f, telemetry.elevationGainMeters, 0.001f)
+        assertEquals(SpeedSource.AUTO, telemetry.speedSource)
+    }
 }

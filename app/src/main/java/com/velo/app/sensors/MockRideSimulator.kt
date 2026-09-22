@@ -9,33 +9,39 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlin.math.max
 import kotlin.math.sin
 
 /**
  * Built-in simulator engine allowing end-to-end testing of real-time speed morphing,
- * heart rate zones, elevation gain, power, and cadence on the Android Emulator without
+ * power, heart rate zones, elevation gain, and cadence on the Android Emulator without
  * physical bike sensors.
  */
 class MockRideSimulator(private val scope: CoroutineScope) {
 
     private val _telemetry = MutableStateFlow(
         RideTelemetry(
-            speedKmh = 33.3f,
-            heartRateBpm = 140,
-            distanceMeters = 27000.0,
-            elapsedTimeSeconds = 2609L,
-            cadenceRpm = 88,
-            avgSpeedKmh = 28.4f,
-            elevationGainMeters = 320f,
-            powerWatts = 210,
-            isGpsActive = true,
-            isWearOsConnected = true
+            speedKmh = 0.0f,
+            maxSpeedKmh = 0.0f,
+            heartRateBpm = 0,
+            distanceMeters = 0.0,
+            elapsedTimeSeconds = 0L,
+            cadenceRpm = 0,
+            avgSpeedKmh = 0.0f,
+            elevationGainMeters = 0f,
+            powerWatts = 0,
+            avgPowerWatts = 0,
+            maxPowerWatts = 0,
+            isGpsActive = false,
+            isHeartRateConnected = false,
+            isBlePowerConnected = false
         )
     )
     val telemetry: StateFlow<RideTelemetry> = _telemetry.asStateFlow()
 
     private var simulationJob: Job? = null
     private var tick = 0
+    private var totalPowerJoules: Long = 0L
 
     fun start() {
         if (simulationJob?.isActive == true) return
@@ -53,24 +59,35 @@ class MockRideSimulator(private val scope: CoroutineScope) {
                 val hrWave = (sin(tick * 0.05) * 35).toInt()
                 val currentHr = (135 + hrWave).coerceIn(90, 185)
 
+                // Power dynamics (160W - 320W)
+                val powerWave = (sin(tick * 0.09) * 60).toInt()
+                val currentPower = (210 + powerWave).coerceIn(120, 380)
+                totalPowerJoules += currentPower
+
                 val prev = _telemetry.value
                 val newDistance = prev.distanceMeters + (currentSpeed / 3.6)
                 val newElapsed = prev.elapsedTimeSeconds + 1
                 val newElevation = prev.elevationGainMeters + if (tick % 5 == 0) 1.0f else 0.0f
-                val newPower = (180 + (sin(tick * 0.1) * 60).toInt()).coerceAtLeast(0)
                 val newCadence = (85 + (sin(tick * 0.07) * 10).toInt()).coerceIn(60, 110)
+                val newMaxSpeed = max(prev.maxSpeedKmh, currentSpeed)
+                val newMaxPower = max(prev.maxPowerWatts, currentPower)
+                val newAvgPower = if (newElapsed > 0) (totalPowerJoules / newElapsed).toInt() else 0
 
                 _telemetry.value = prev.copy(
                     speedKmh = currentSpeed,
+                    maxSpeedKmh = newMaxSpeed,
                     heartRateBpm = currentHr,
                     distanceMeters = newDistance,
                     elapsedTimeSeconds = newElapsed,
                     cadenceRpm = newCadence,
                     avgSpeedKmh = ((newDistance / 1000.0) / (newElapsed / 3600.0)).toFloat(),
                     elevationGainMeters = newElevation,
-                    powerWatts = newPower,
+                    powerWatts = currentPower,
+                    avgPowerWatts = newAvgPower,
+                    maxPowerWatts = newMaxPower,
                     isGpsActive = true,
-                    isWearOsConnected = true
+                    isHeartRateConnected = true,
+                    isBlePowerConnected = true
                 )
             }
         }
@@ -82,8 +99,12 @@ class MockRideSimulator(private val scope: CoroutineScope) {
     }
 
     fun reset() {
+        stop()
+        tick = 0
+        totalPowerJoules = 0L
         _telemetry.value = RideTelemetry(
             speedKmh = 0.0f,
+            maxSpeedKmh = 0.0f,
             heartRateBpm = 0,
             distanceMeters = 0.0,
             elapsedTimeSeconds = 0L,
@@ -91,8 +112,11 @@ class MockRideSimulator(private val scope: CoroutineScope) {
             avgSpeedKmh = 0.0f,
             elevationGainMeters = 0.0f,
             powerWatts = 0,
-            isGpsActive = true,
-            isWearOsConnected = true
+            avgPowerWatts = 0,
+            maxPowerWatts = 0,
+            isGpsActive = false,
+            isHeartRateConnected = false,
+            isBlePowerConnected = false
         )
     }
 }

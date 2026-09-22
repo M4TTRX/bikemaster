@@ -1,7 +1,7 @@
 package com.velo.app.model
 
+import com.velo.app.data.PairedBleDevice
 import com.velo.app.sensors.DiscoveredSensor
-import com.velo.app.sensors.SensorType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -12,60 +12,107 @@ class BlePairingTest {
     @Test
     fun testDiscoveredSensorModel() {
         val sensor = DiscoveredSensor(
-            name = "Wahoo SPEED v2",
-            address = "C4:7D:CC:12:34:56",
-            rssi = -62,
-            type = SensorType.CADENCE_SPEED
+            name = "Decathlon Dual SPD/CAD",
+            address = "D4:36:39:84:B2:C1",
+            rssi = -58,
+            detectedCapabilities = setOf(SensorDataType.SPEED, SensorDataType.CADENCE)
         )
 
-        assertEquals("Wahoo SPEED v2", sensor.name)
-        assertEquals("C4:7D:CC:12:34:56", sensor.address)
-        assertEquals(-62, sensor.rssi)
-        assertEquals(SensorType.CADENCE_SPEED, sensor.type)
+        assertEquals("Decathlon Dual SPD/CAD", sensor.name)
+        assertEquals("D4:36:39:84:B2:C1", sensor.address)
+        assertEquals(-58, sensor.rssi)
+        assertTrue(sensor.detectedCapabilities.contains(SensorDataType.SPEED))
+        assertTrue(sensor.detectedCapabilities.contains(SensorDataType.CADENCE))
+        assertFalse(sensor.detectedCapabilities.contains(SensorDataType.POWER))
     }
 
     @Test
-    fun testSensorTypeCoverage() {
-        val types = SensorType.entries
-        assertEquals(3, types.size)
-        assertTrue(types.contains(SensorType.CADENCE_SPEED))
-        assertTrue(types.contains(SensorType.POWER))
-        assertTrue(types.contains(SensorType.HEART_RATE))
+    fun testSensorDataTypeCoverage() {
+        val types = SensorDataType.entries
+        assertEquals(4, types.size)
+        assertTrue(types.contains(SensorDataType.SPEED))
+        assertTrue(types.contains(SensorDataType.CADENCE))
+        assertTrue(types.contains(SensorDataType.POWER))
+        assertTrue(types.contains(SensorDataType.HEART_RATE))
+    }
+
+    @Test
+    fun testMetricTypeCoverage() {
+        val metrics = MetricType.entries
+        assertEquals(11, metrics.size)
+        assertTrue(metrics.contains(MetricType.SPEED))
+        assertTrue(metrics.contains(MetricType.CADENCE))
+        assertTrue(metrics.contains(MetricType.POWER))
+        assertTrue(metrics.contains(MetricType.HEART_RATE))
+        assertTrue(metrics.contains(MetricType.DISTANCE))
+        assertTrue(metrics.contains(MetricType.ELAPSED_TIME))
+        assertTrue(metrics.contains(MetricType.AVG_SPEED))
+        assertTrue(metrics.contains(MetricType.MAX_SPEED))
+        assertTrue(metrics.contains(MetricType.AVG_POWER))
+        assertTrue(metrics.contains(MetricType.MAX_POWER))
+        assertTrue(metrics.contains(MetricType.ELEVATION))
     }
 
     @Test
     fun testTelemetrySensorConnectionFlags() {
         val defaultTelemetry = RideTelemetry()
         assertFalse(defaultTelemetry.isBleCadenceConnected)
+        assertFalse(defaultTelemetry.isBleSpeedConnected)
         assertFalse(defaultTelemetry.isBlePowerConnected)
-        assertFalse(defaultTelemetry.isWearOsConnected)
+        assertFalse(defaultTelemetry.isHeartRateConnected)
+        assertEquals(0, defaultTelemetry.powerWatts)
 
         val connectedTelemetry = defaultTelemetry.copy(
             isBleCadenceConnected = true,
+            isBleSpeedConnected = true,
             isBlePowerConnected = true,
-            isWearOsConnected = true
+            isHeartRateConnected = true,
+            powerWatts = 245,
+            avgPowerWatts = 210,
+            maxPowerWatts = 420
         )
         assertTrue(connectedTelemetry.isBleCadenceConnected)
+        assertTrue(connectedTelemetry.isBleSpeedConnected)
         assertTrue(connectedTelemetry.isBlePowerConnected)
-        assertTrue(connectedTelemetry.isWearOsConnected)
+        assertTrue(connectedTelemetry.isHeartRateConnected)
+        assertEquals(245, connectedTelemetry.powerWatts)
+        assertEquals(210, connectedTelemetry.avgPowerWatts)
+        assertEquals(420, connectedTelemetry.maxPowerWatts)
     }
 
     @Test
-    fun testPairedBleDeviceEncoding() {
-        val device = com.velo.app.data.PairedBleDevice(
-            type = SensorType.CADENCE_SPEED,
-            address = "C4:7D:CC:12:34:56",
-            name = "Wahoo SPEED v2"
+    fun testPairedBleDeviceSerialization() {
+        val device = PairedBleDevice(
+            address = "D4:36:39:84:B2:C1",
+            name = "Decathlon Dual SPD/CAD",
+            detectedCapabilities = setOf(SensorDataType.SPEED, SensorDataType.CADENCE),
+            enabledDataTypes = setOf(SensorDataType.CADENCE) // User toggled off speed
         )
-        val encoded = "${device.type.name}|${device.address}|${device.name}"
-        assertEquals("CADENCE_SPEED|C4:7D:CC:12:34:56|Wahoo SPEED v2", encoded)
+        val detectedStr = device.detectedCapabilities.joinToString(",") { it.name }
+        val enabledStr = device.enabledDataTypes.joinToString(",") { it.name }
+        val encoded = "${device.address}|${device.name}|$detectedStr|$enabledStr"
 
-        val parts = encoded.split("|", limit = 3)
-        val decoded = com.velo.app.data.PairedBleDevice(
-            type = SensorType.valueOf(parts[0]),
-            address = parts[1],
-            name = parts[2]
+        assertEquals("D4:36:39:84:B2:C1|Decathlon Dual SPD/CAD|SPEED,CADENCE|CADENCE", encoded)
+
+        val parts = encoded.split("|")
+        val decoded = PairedBleDevice(
+            address = parts[0],
+            name = parts[1],
+            detectedCapabilities = parts[2].split(",").map { SensorDataType.valueOf(it) }.toSet(),
+            enabledDataTypes = parts[3].split(",").map { SensorDataType.valueOf(it) }.toSet()
         )
         assertEquals(device, decoded)
+    }
+
+    @Test
+    fun testPowerMeterDeviceModel() {
+        val powerMeter = PairedBleDevice(
+            address = "F1:22:33:44:55:66",
+            name = "Stages Power L",
+            detectedCapabilities = setOf(SensorDataType.POWER, SensorDataType.CADENCE),
+            enabledDataTypes = setOf(SensorDataType.POWER, SensorDataType.CADENCE)
+        )
+        assertTrue(powerMeter.detectedCapabilities.contains(SensorDataType.POWER))
+        assertTrue(powerMeter.enabledDataTypes.contains(SensorDataType.CADENCE))
     }
 }

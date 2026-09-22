@@ -4,11 +4,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.velo.app.model.UnitSystem
@@ -44,7 +44,7 @@ fun SpeedDisplay(
         // Colossal Adaptive Speed Value
         Text(
             text = formattedSpeed,
-            color = Color.White,
+            color = MaterialTheme.colorScheme.onBackground,
             fontSize = fontSize,
             fontFamily = getRobotoFlexFont(width = fontWidth, weight = 320),
             lineHeight = fontSize,
@@ -54,7 +54,7 @@ fun SpeedDisplay(
         // Wide letter-spaced unit
         Text(
             text = unitText,
-            color = Color.White,
+            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f),
             fontSize = 24.sp,
             fontFamily = getRobotoFlexFont(width = 135f, weight = 300),
             letterSpacing = 4.sp

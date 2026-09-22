@@ -3,11 +3,12 @@ package com.velo.app.data
 import android.location.Location
 import com.velo.app.model.RideStatus
 import com.velo.app.model.RideTelemetry
+import com.velo.app.model.SensorDataType
+import com.velo.app.model.SpeedSource
 import com.velo.app.sensors.BleSensorManager
 import com.velo.app.sensors.DiscoveredSensor
 import com.velo.app.sensors.LocationTracker
 import com.velo.app.sensors.MockRideSimulator
-import com.velo.app.sensors.SensorType
 import com.velo.app.sensors.WearOsManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -23,6 +24,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlin.math.max
 
 interface RideRepository {
     val telemetry: StateFlow<RideTelemetry>
@@ -33,9 +35,13 @@ interface RideRepository {
     fun pauseRide()
     fun resumeRide(useSimulator: Boolean)
     fun finishRide()
-    fun startSensorScan(type: SensorType)
+    fun resetRide()
+    fun startSensorScan()
     fun stopSensorScan()
     fun pairSensor(sensor: DiscoveredSensor)
+    fun updateSensorEnabledTypes(address: String, types: Set<SensorDataType>)
+    fun unpairSensor(address: String)
+    fun disconnectSensor(address: String)
 }
 
 class DefaultRideRepository(
@@ -48,12 +54,15 @@ class DefaultRideRepository(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val simulator = MockRideSimulator(scope)
 
-    private val _rideStatus = MutableStateFlow(RideStatus.RECORDING)
+    private val _rideStatus = MutableStateFlow(RideStatus.IDLE)
     override val rideStatus: StateFlow<RideStatus> = _rideStatus.asStateFlow()
+
+    private val _speedSource = MutableStateFlow(SpeedSource.AUTO)
 
     private val _realTelemetry = MutableStateFlow(
         RideTelemetry(
             speedKmh = 0f,
+            maxSpeedKmh = 0f,
             heartRateBpm = 0,
             distanceMeters = 0.0,
             elapsedTimeSeconds = 0L,
@@ -61,15 +70,22 @@ class DefaultRideRepository(
             avgSpeedKmh = 0f,
             elevationGainMeters = 0f,
             powerWatts = 0,
+            avgPowerWatts = 0,
+            maxPowerWatts = 0,
             isGpsActive = false,
-            isWearOsConnected = false
+            isHeartRateConnected = false,
+            isBleCadenceConnected = false,
+            isBleSpeedConnected = false,
+            isBlePowerConnected = false,
+            speedSource = SpeedSource.AUTO
         )
     )
 
-    private val _useSimulator = MutableStateFlow(true)
-    private val _pairedSensors = MutableStateFlow<Set<SensorType>>(emptySet())
+    private val _useSimulator = MutableStateFlow(false)
+    private var totalPowerJoules: Long = 0L
 
     private var locationJob: Job? = null
+    private var speedSensorJob: Job? = null
     private var timerJob: Job? = null
     private var lastLocation: Location? = null
 
@@ -80,44 +96,66 @@ class DefaultRideRepository(
         _useSimulator,
         simulator.telemetry,
         _realTelemetry,
-        _pairedSensors
-    ) { useSim, simData, realData, paired ->
+        _speedSource
+    ) { useSim, simData, realData, speedSrc ->
         val base = if (useSim) simData else realData
-        base.copy(
-            isBleCadenceConnected = paired.contains(SensorType.CADENCE_SPEED) || base.isBleCadenceConnected,
-            isBlePowerConnected = paired.contains(SensorType.POWER) || base.isBlePowerConnected,
-            isWearOsConnected = paired.contains(SensorType.HEART_RATE) || base.isWearOsConnected
-        )
+        base.copy(speedSource = speedSrc)
     }
 
     override val telemetry: StateFlow<RideTelemetry> = combine(
         baseFlow,
         bleSensorManager.isCadenceConnected,
+        bleSensorManager.isSpeedConnected,
         bleSensorManager.isPowerConnected,
-        bleSensorManager.isHeartRateConnected
-    ) { base, bleCadConn, blePwrConn, bleHrConn ->
+        combine(
+            bleSensorManager.isHeartRateConnected,
+            wearOsManager.isConnected,
+            wearOsManager.wearOsHeartRate
+        ) { bleHr, wearConn, hr ->
+            bleHr || wearConn || hr > 0
+        }
+    ) { base, bleCadConn, bleSpeedConn, blePowConn, hrConn ->
         base.copy(
             isBleCadenceConnected = bleCadConn || base.isBleCadenceConnected,
-            isBlePowerConnected = blePwrConn || base.isBlePowerConnected,
-            isWearOsConnected = bleHrConn || base.isWearOsConnected
+            isBleSpeedConnected = bleSpeedConn || base.isBleSpeedConnected,
+            isBlePowerConnected = blePowConn || base.isBlePowerConnected,
+            isHeartRateConnected = hrConn || base.isHeartRateConnected
         )
     }.stateIn(
         scope = scope,
         started = SharingStarted.Eagerly,
-        initialValue = simulator.telemetry.value
+        initialValue = _realTelemetry.value
     )
 
     init {
-        // Collect BLE cadence & power
+        wearOsManager.startListening()
+        wearOsManager.sendRideStatus(_rideStatus.value.name)
+
+        // Collect BLE cadence
         scope.launch {
-            combine(bleSensorManager.cadenceFlow, bleSensorManager.powerFlow) { cad, pwr ->
-                cad to pwr
-            }.collect { (cad, pwr) ->
+            bleSensorManager.cadenceFlow.collect { cad ->
                 if (!_useSimulator.value) {
                     _realTelemetry.update {
-                        it.copy(
-                            cadenceRpm = cad,
-                            powerWatts = pwr
+                        it.copy(cadenceRpm = cad)
+                    }
+                }
+            }
+        }
+
+        // Collect BLE power
+        scope.launch {
+            bleSensorManager.powerFlow.collect { watts ->
+                if (!_useSimulator.value) {
+                    if (_rideStatus.value == RideStatus.RECORDING && watts > 0) {
+                        totalPowerJoules += watts
+                    }
+                    _realTelemetry.update { cur ->
+                        val newMax = max(cur.maxPowerWatts, watts)
+                        val newAvg = if (cur.elapsedTimeSeconds > 0) (totalPowerJoules / cur.elapsedTimeSeconds).toInt() else 0
+                        cur.copy(
+                            powerWatts = watts,
+                            maxPowerWatts = newMax,
+                            avgPowerWatts = newAvg
                         )
                     }
                 }
@@ -131,28 +169,51 @@ class DefaultRideRepository(
             }.collect { hr ->
                 if (!_useSimulator.value) {
                     _realTelemetry.update {
-                        it.copy(
-                            heartRateBpm = hr
-                        )
+                        it.copy(heartRateBpm = hr)
                     }
                 }
             }
         }
 
-        // Restore paired sensors from settings DataStore and auto-connect
+        // Settings observation (speed source, wheel circumference, paired devices, simulator)
         if (settingsRepository != null) {
             scope.launch {
+                settingsRepository.isMockSimulatorEnabled.collect { mockEnabled ->
+                    _useSimulator.value = mockEnabled
+                }
+            }
+
+            scope.launch {
+                settingsRepository.speedSourceFlow.collect { source ->
+                    _speedSource.value = source
+                    _realTelemetry.update { it.copy(speedSource = source) }
+                }
+            }
+
+            scope.launch {
+                settingsRepository.wheelCircumferenceFlow.collect { circumferenceMm ->
+                    bleSensorManager.setWheelCircumference(circumferenceMm)
+                }
+            }
+
+            scope.launch {
                 settingsRepository.pairedBleDevicesFlow.collect { savedDevices ->
-                    _pairedSensors.value = savedDevices.map { it.type }.toSet()
                     savedDevices.forEach { device ->
-                        bleSensorManager.connectDevice(device.address, device.name, device.type)
+                        bleSensorManager.connectDevice(device.address, device.name, device.enabledDataTypes)
                     }
                 }
             }
         }
+    }
 
-        // Default start simulator for out-of-the-box emulator experience
-        simulator.start()
+    private fun shouldUseSpeedSensor(): Boolean {
+        val src = _speedSource.value
+        val hasSensor = bleSensorManager.isSpeedConnected.value
+        return when (src) {
+            SpeedSource.SPEED_SENSOR -> true
+            SpeedSource.AUTO -> hasSensor
+            SpeedSource.GPS -> false
+        }
     }
 
     private fun startTrackingRealData() {
@@ -167,28 +228,50 @@ class DefaultRideRepository(
                     _realTelemetry.update { cur ->
                         val elapsed = cur.elapsedTimeSeconds + 1
                         val avgSpeed = if (elapsed > 0) ((cur.distanceMeters / 1000.0) / (elapsed / 3600.0)).toFloat() else 0f
+                        val avgPower = if (elapsed > 0) (totalPowerJoules / elapsed).toInt() else 0
                         cur.copy(
                             elapsedTimeSeconds = elapsed,
-                            avgSpeedKmh = avgSpeed
+                            avgSpeedKmh = avgSpeed,
+                            avgPowerWatts = avgPower
                         )
                     }
                 }
             }
         }
 
-        // Battery-saving GPS collection: ONLY active while RECORDING
+        // Wheel sensor speed & distance accumulation: ONLY while RECORDING
+        speedSensorJob = scope.launch {
+            combine(bleSensorManager.speedFlow, bleSensorManager.distanceDeltaFlow) { speed, deltaDist ->
+                Pair(speed, deltaDist)
+            }.collect { (speedKmh, deltaDist) ->
+                if (_rideStatus.value != RideStatus.RECORDING) return@collect
+                if (!shouldUseSpeedSensor()) return@collect
+
+                _realTelemetry.update { cur ->
+                    val newDist = cur.distanceMeters + deltaDist
+                    val newMax = max(cur.maxSpeedKmh, speedKmh)
+                    cur.copy(
+                        speedKmh = speedKmh,
+                        maxSpeedKmh = newMax,
+                        distanceMeters = newDist
+                    )
+                }
+            }
+        }
+
+        // GPS collection: ONLY active while RECORDING
         locationJob = scope.launch {
             locationTracker.getLocationFlow().collect { location ->
                 if (_rideStatus.value != RideStatus.RECORDING) return@collect
                 val prev = lastLocation
-                val speedKmh = (location.speed * 3.6f).coerceAtLeast(0f)
+                val gpsSpeedKmh = (location.speed * 3.6f).coerceAtLeast(0f)
                 var addedDistance = 0.0
                 var addedElevation = 0f
 
                 if (prev != null && (!location.hasAccuracy() || location.accuracy < 25f)) {
                     val deltaDist = prev.distanceTo(location).toDouble()
                     // Filter stationary GPS jitter
-                    if (deltaDist > 1.5 && speedKmh > 1.5f) {
+                    if (deltaDist > 1.5 && gpsSpeedKmh > 1.5f) {
                         addedDistance = deltaDist
                     }
                     if (location.hasAltitude() && prev.hasAltitude()) {
@@ -198,10 +281,15 @@ class DefaultRideRepository(
                 }
                 lastLocation = location
 
+                val useSensor = shouldUseSpeedSensor()
+
                 _realTelemetry.update { cur ->
-                    val newDist = cur.distanceMeters + addedDistance
+                    val newDist = if (useSensor) cur.distanceMeters else cur.distanceMeters + addedDistance
+                    val activeSpeed = if (useSensor) cur.speedKmh else gpsSpeedKmh
+                    val newMax = max(cur.maxSpeedKmh, activeSpeed)
                     cur.copy(
-                        speedKmh = speedKmh,
+                        speedKmh = activeSpeed,
+                        maxSpeedKmh = newMax,
                         distanceMeters = newDist,
                         elevationGainMeters = cur.elevationGainMeters + addedElevation,
                         isGpsActive = true
@@ -214,6 +302,8 @@ class DefaultRideRepository(
     private fun stopTrackingRealData() {
         locationJob?.cancel()
         locationJob = null
+        speedSensorJob?.cancel()
+        speedSensorJob = null
         timerJob?.cancel()
         timerJob = null
         lastLocation = null
@@ -222,18 +312,21 @@ class DefaultRideRepository(
     override fun startRide(useSimulator: Boolean) {
         _useSimulator.value = useSimulator
         _rideStatus.value = RideStatus.RECORDING
+        wearOsManager.startListening()
+        wearOsManager.openCompanionApp()
+        wearOsManager.sendRideStatus("RECORDING")
         if (useSimulator) {
             stopTrackingRealData()
             simulator.start()
         } else {
             simulator.stop()
-            wearOsManager.startListening()
             startTrackingRealData()
         }
     }
 
     override fun pauseRide() {
         _rideStatus.value = RideStatus.PAUSED
+        wearOsManager.sendRideStatus("PAUSED")
         simulator.stop()
         stopTrackingRealData()
     }
@@ -241,25 +334,56 @@ class DefaultRideRepository(
     override fun resumeRide(useSimulator: Boolean) {
         _useSimulator.value = useSimulator
         _rideStatus.value = RideStatus.RECORDING
+        wearOsManager.startListening()
+        wearOsManager.openCompanionApp()
+        wearOsManager.sendRideStatus("RECORDING")
         if (useSimulator) {
             stopTrackingRealData()
             simulator.start()
         } else {
             simulator.stop()
-            wearOsManager.startListening()
             startTrackingRealData()
         }
     }
 
     override fun finishRide() {
         _rideStatus.value = RideStatus.FINISHED
+        wearOsManager.sendRideStatus("FINISHED")
         simulator.stop()
-        wearOsManager.stopListening()
         stopTrackingRealData()
     }
 
-    override fun startSensorScan(type: SensorType) {
-        bleSensorManager.startScanning(type, isMockEnabled = _useSimulator.value)
+    override fun resetRide() {
+        stopTrackingRealData()
+        simulator.stop()
+        simulator.reset()
+        wearOsManager.sendRideStatus("IDLE")
+        wearOsManager.startListening()
+        totalPowerJoules = 0L
+        _rideStatus.value = RideStatus.IDLE
+        _realTelemetry.value = RideTelemetry(
+            speedKmh = 0f,
+            maxSpeedKmh = 0f,
+            heartRateBpm = 0,
+            distanceMeters = 0.0,
+            elapsedTimeSeconds = 0L,
+            cadenceRpm = 0,
+            avgSpeedKmh = 0f,
+            elevationGainMeters = 0f,
+            powerWatts = 0,
+            avgPowerWatts = 0,
+            maxPowerWatts = 0,
+            isGpsActive = false,
+            isHeartRateConnected = false,
+            isBleCadenceConnected = false,
+            isBleSpeedConnected = false,
+            isBlePowerConnected = false,
+            speedSource = _speedSource.value
+        )
+    }
+
+    override fun startSensorScan() {
+        bleSensorManager.startScanning(isMockEnabled = _useSimulator.value)
     }
 
     override fun stopSensorScan() {
@@ -267,27 +391,48 @@ class DefaultRideRepository(
     }
 
     override fun pairSensor(sensor: DiscoveredSensor) {
-        // Connect to physical BLE device
-        bleSensorManager.connectDevice(sensor.address, sensor.name, sensor.type)
-        _pairedSensors.update { it + sensor.type }
-        _realTelemetry.update { current ->
-            when (sensor.type) {
-                SensorType.CADENCE_SPEED -> current.copy(isBleCadenceConnected = true)
-                SensorType.POWER -> current.copy(isBlePowerConnected = true)
-                SensorType.HEART_RATE -> current.copy(isWearOsConnected = true)
-            }
+        val defaultEnabled = if (sensor.detectedCapabilities.isNotEmpty()) {
+            sensor.detectedCapabilities
+        } else {
+            setOf(SensorDataType.SPEED, SensorDataType.CADENCE)
         }
+
+        bleSensorManager.connectDevice(sensor.address, sensor.name, defaultEnabled)
+
         if (settingsRepository != null) {
             scope.launch {
                 settingsRepository.savePairedDevice(
                     PairedBleDevice(
-                        type = sensor.type,
                         address = sensor.address,
-                        name = sensor.name
+                        name = sensor.name,
+                        detectedCapabilities = sensor.detectedCapabilities,
+                        enabledDataTypes = defaultEnabled
                     )
                 )
             }
         }
         stopSensorScan()
+    }
+
+    override fun updateSensorEnabledTypes(address: String, types: Set<SensorDataType>) {
+        bleSensorManager.updateSensorEnabledTypes(address, types)
+        if (settingsRepository != null) {
+            scope.launch {
+                settingsRepository.updateSensorEnabledTypes(address, types)
+            }
+        }
+    }
+
+    override fun unpairSensor(address: String) {
+        bleSensorManager.disconnectDevice(address)
+        if (settingsRepository != null) {
+            scope.launch {
+                settingsRepository.removePairedDevice(address)
+            }
+        }
+    }
+
+    override fun disconnectSensor(address: String) {
+        bleSensorManager.disconnectDevice(address)
     }
 }

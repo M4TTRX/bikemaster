@@ -9,7 +9,10 @@ class RideStateTest {
 
     @Test
     fun testRideStatusTransitions() {
-        var status = RideStatus.RECORDING
+        var status = RideStatus.IDLE
+        assertEquals("IDLE", status.name)
+
+        status = RideStatus.RECORDING
         assertEquals("RECORDING", status.name)
 
         status = RideStatus.PAUSED

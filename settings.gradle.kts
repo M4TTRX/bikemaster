@@ -21,3 +21,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "velo"
 include(":app")
+include(":wear")

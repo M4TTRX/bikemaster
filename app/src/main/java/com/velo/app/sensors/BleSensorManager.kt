@@ -10,10 +10,8 @@ import android.bluetooth.le.ScanSettings
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
-import android.os.Handler
-import android.os.Looper
-import android.os.ParcelUuid
 import androidx.core.content.ContextCompat
+import com.velo.app.model.SensorDataType
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -29,7 +27,6 @@ import java.util.concurrent.ConcurrentHashMap
 class BleSensorManager(private val context: Context) {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val mainHandler = Handler(Looper.getMainLooper())
 
     private val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
     private val bluetoothAdapter: BluetoothAdapter?
@@ -38,14 +35,23 @@ class BleSensorManager(private val context: Context) {
     private val _cadenceFlow = MutableStateFlow(0)
     val cadenceFlow: StateFlow<Int> = _cadenceFlow.asStateFlow()
 
+    private val _speedFlow = MutableStateFlow(0f)
+    val speedFlow: StateFlow<Float> = _speedFlow.asStateFlow()
+
     private val _powerFlow = MutableStateFlow(0)
     val powerFlow: StateFlow<Int> = _powerFlow.asStateFlow()
+
+    private val _distanceDeltaFlow = MutableStateFlow(0.0)
+    val distanceDeltaFlow: StateFlow<Double> = _distanceDeltaFlow.asStateFlow()
 
     private val _heartRateFlow = MutableStateFlow(0)
     val heartRateFlow: StateFlow<Int> = _heartRateFlow.asStateFlow()
 
     private val _isCadenceConnected = MutableStateFlow(false)
     val isCadenceConnected: StateFlow<Boolean> = _isCadenceConnected.asStateFlow()
+
+    private val _isSpeedConnected = MutableStateFlow(false)
+    val isSpeedConnected: StateFlow<Boolean> = _isSpeedConnected.asStateFlow()
 
     private val _isPowerConnected = MutableStateFlow(false)
     val isPowerConnected: StateFlow<Boolean> = _isPowerConnected.asStateFlow()
@@ -59,10 +65,65 @@ class BleSensorManager(private val context: Context) {
     private val _isScanning = MutableStateFlow(false)
     val isScanning: StateFlow<Boolean> = _isScanning.asStateFlow()
 
+    private var currentWheelCircumferenceMm: Int = 2105
     private val activeClients = ConcurrentHashMap<String, SingleSensorBleManager>()
     private var scanCallback: ScanCallback? = null
     private var scanTimeoutJob: Job? = null
-    private var currentScanType: SensorType? = null
+
+    companion object {
+        private val AUDIO_BLACKLIST = listOf(
+            "headphone", "headset", "earbud", "buds", "speaker", "sound",
+            "bose", "jbl", "sony", "quietcomfort", "wh-", "wf-", "airpod",
+            "soundcore", "pixel buds", "freebuds", "echo", "audio", "beats"
+        )
+
+        private val CYCLING_BRAND_WHITELIST = listOf(
+            "speed", "cadence", "csc", "magene", "wahoo", "garmin",
+            "coospo", "cycplus", "xoss", "bryton", "stages", "4iiii",
+            "duotrap", "santos", "giant", "shimano", "sram", "polar",
+            "tickr", "whoop", "h10", "h9", "scosche", "power", "assioma",
+            "quarq", "rotor", "favero", "decathlon", "btwin", "b'twin",
+            "van rysel", "vanrysel", "geonaute"
+        )
+    }
+
+    fun setWheelCircumference(circumferenceMm: Int) {
+        currentWheelCircumferenceMm = circumferenceMm
+        activeClients.values.forEach { client ->
+            client.wheelCircumferenceMm = circumferenceMm
+        }
+    }
+
+    fun updateSensorEnabledTypes(address: String, enabledTypes: Set<SensorDataType>) {
+        activeClients[address]?.let { client ->
+            client.enabledDataTypes = enabledTypes
+            if (!enabledTypes.contains(SensorDataType.SPEED)) {
+                _speedFlow.value = 0f
+            }
+            if (!enabledTypes.contains(SensorDataType.CADENCE)) {
+                _cadenceFlow.value = 0
+            }
+            if (!enabledTypes.contains(SensorDataType.POWER)) {
+                _powerFlow.value = 0
+            }
+            if (!enabledTypes.contains(SensorDataType.HEART_RATE)) {
+                _heartRateFlow.value = 0
+            }
+            updateConnectionFlags()
+        }
+    }
+
+    private fun updateConnectionFlags() {
+        val hasSpeed = activeClients.values.any { it.isConnected && it.enabledDataTypes.contains(SensorDataType.SPEED) }
+        val hasCadence = activeClients.values.any { it.isConnected && it.enabledDataTypes.contains(SensorDataType.CADENCE) }
+        val hasPower = activeClients.values.any { it.isConnected && it.enabledDataTypes.contains(SensorDataType.POWER) }
+        val hasHr = activeClients.values.any { it.isConnected && it.enabledDataTypes.contains(SensorDataType.HEART_RATE) }
+
+        _isSpeedConnected.value = hasSpeed
+        _isCadenceConnected.value = hasCadence
+        _isPowerConnected.value = hasPower
+        _isHeartRateConnected.value = hasHr
+    }
 
     private fun hasScanPermission(): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -80,9 +141,8 @@ class BleSensorManager(private val context: Context) {
         }
     }
 
-    fun startScanning(type: SensorType, isMockEnabled: Boolean = false) {
+    fun startScanning(isMockEnabled: Boolean = false) {
         stopScanning()
-        currentScanType = type
         _discoveredSensors.value = emptyList()
         _isScanning.value = true
 
@@ -107,36 +167,50 @@ class BleSensorManager(private val context: Context) {
                     val rssi = result.rssi
                     val serviceUuids = result.scanRecord?.serviceUuids?.map { it.uuid } ?: emptyList()
 
-                    val matchesType = when (type) {
-                        SensorType.CADENCE_SPEED -> serviceUuids.contains(SingleSensorBleManager.CSC_SERVICE_UUID) ||
-                                rawName?.contains("speed", ignoreCase = true) == true ||
-                                rawName?.contains("cadence", ignoreCase = true) == true ||
-                                rawName?.contains("csc", ignoreCase = true) == true ||
-                                rawName?.contains("magene", ignoreCase = true) == true ||
-                                rawName?.contains("wahoo", ignoreCase = true) == true ||
-                                rawName?.contains("garmin", ignoreCase = true) == true ||
-                                rawName?.contains("coospo", ignoreCase = true) == true
-                        SensorType.POWER -> serviceUuids.contains(SingleSensorBleManager.POWER_SERVICE_UUID) ||
-                                rawName?.contains("power", ignoreCase = true) == true ||
-                                rawName?.contains("assioma", ignoreCase = true) == true ||
-                                rawName?.contains("stages", ignoreCase = true) == true ||
-                                rawName?.contains("4iiii", ignoreCase = true) == true ||
-                                rawName?.contains("quarq", ignoreCase = true) == true ||
-                                rawName?.contains("srm", ignoreCase = true) == true ||
-                                rawName?.contains("favero", ignoreCase = true) == true
-                        SensorType.HEART_RATE -> serviceUuids.contains(SingleSensorBleManager.HRM_SERVICE_UUID) ||
-                                rawName?.contains("heart", ignoreCase = true) == true ||
-                                rawName?.contains("hrm", ignoreCase = true) == true ||
-                                rawName?.contains("polar", ignoreCase = true) == true ||
-                                rawName?.contains("tickr", ignoreCase = true) == true ||
-                                rawName?.contains("whoop", ignoreCase = true) == true ||
-                                rawName?.contains("h10", ignoreCase = true) == true ||
-                                rawName?.contains("h9", ignoreCase = true) == true
+                    val lowerName = rawName?.lowercase() ?: ""
+
+                    // 1. Strictly exclude known audio, headset, and speaker devices
+                    if (AUDIO_BLACKLIST.any { lowerName.contains(it) }) {
+                        return
                     }
 
-                    if (matchesType || (rawName != null && serviceUuids.isNotEmpty())) {
-                        val displayName = rawName ?: "BLE ${type.title} ($address)"
-                        val discovered = DiscoveredSensor(displayName, address, rssi, type)
+                    // 2. Identify capabilities from advertised services or brand signatures
+                    val detectedCapabilities = mutableSetOf<SensorDataType>()
+                    if (serviceUuids.contains(SingleSensorBleManager.HRM_SERVICE_UUID) ||
+                        listOf("heart", "hrm", "polar", "tickr", "whoop", "h10", "h9").any { lowerName.contains(it) }
+                    ) {
+                        detectedCapabilities.add(SensorDataType.HEART_RATE)
+                    }
+
+                    if (serviceUuids.contains(SingleSensorBleManager.CSC_SERVICE_UUID) ||
+                        listOf(
+                            "speed", "cadence", "csc", "magene", "duotrap",
+                            "decathlon", "btwin", "b'twin", "van rysel", "vanrysel", "geonaute"
+                        ).any { lowerName.contains(it) }
+                    ) {
+                        detectedCapabilities.add(SensorDataType.SPEED)
+                        detectedCapabilities.add(SensorDataType.CADENCE)
+                    }
+
+                    if (serviceUuids.contains(SingleSensorBleManager.CYCLING_POWER_SERVICE_UUID) ||
+                        listOf("power", "stages", "assioma", "4iiii", "quarq", "rotor", "favero").any { lowerName.contains(it) }
+                    ) {
+                        detectedCapabilities.add(SensorDataType.POWER)
+                        detectedCapabilities.add(SensorDataType.CADENCE)
+                    }
+
+                    val isCyclingBrand = CYCLING_BRAND_WHITELIST.any { lowerName.contains(it) }
+
+                    // Only accept if recognized as a cycling/fitness sensor
+                    if (detectedCapabilities.isNotEmpty() || isCyclingBrand) {
+                        if (detectedCapabilities.isEmpty()) {
+                            detectedCapabilities.add(SensorDataType.SPEED)
+                            detectedCapabilities.add(SensorDataType.CADENCE)
+                        }
+
+                        val cleanName = rawName?.takeIf { it.isNotBlank() } ?: "Cycling Sensor (${address.takeLast(5)})"
+                        val discovered = DiscoveredSensor(cleanName, address, rssi, detectedCapabilities)
+
                         _discoveredSensors.update { list ->
                             val existingIndex = list.indexOfFirst { it.address == address }
                             if (existingIndex >= 0) {
@@ -149,7 +223,9 @@ class BleSensorManager(private val context: Context) {
                 }
 
                 override fun onScanFailed(errorCode: Int) {
-                    _isScanning.value = false
+                    if (!com.velo.app.util.isRunningOnEmulator() && !isMockEnabled) {
+                        _isScanning.value = false
+                    }
                 }
             }
             scanCallback = callback
@@ -160,39 +236,51 @@ class BleSensorManager(private val context: Context) {
                     .build()
                 scanner.startScan(null, settings, callback)
             } catch (e: SecurityException) {
-                _isScanning.value = false
+                if (!com.velo.app.util.isRunningOnEmulator() && !isMockEnabled) {
+                    _isScanning.value = false
+                }
             }
         }
 
-        // Auto-stop scan after 15 seconds to save battery
+        // Auto-stop scan after 15 seconds to conserve power
         scanTimeoutJob = scope.launch {
             delay(15000L)
             stopScanning()
         }
 
-        // If mock emulator mode is on and no real sensors detected after 2.5 seconds, inject simulated devices
-        if (isMockEnabled) {
+        // If mock emulator mode is on or running on emulator and no real sensors detected, inject simulated devices
+        if (isMockEnabled || com.velo.app.util.isRunningOnEmulator()) {
             scope.launch {
-                delay(2500L)
-                if (_discoveredSensors.value.isEmpty() && _isScanning.value) {
-                    val demoSensors = when (type) {
-                        SensorType.CADENCE_SPEED -> listOf(
-                            DiscoveredSensor("Wahoo SPEED v2", "C4:7D:CC:12:34:56", -62, type),
-                            DiscoveredSensor("Garmin CADENCE 2", "D1:9A:88:AB:CD:EF", -74, type),
-                            DiscoveredSensor("Magene S3+", "E0:44:11:22:33:44", -81, type)
+                delay(800L)
+                if (_discoveredSensors.value.isEmpty()) {
+                    val demoSensors = listOf(
+                        DiscoveredSensor(
+                            name = "Decathlon Dual SPD/CAD",
+                            address = "D4:36:39:84:B2:C1",
+                            rssi = -58,
+                            detectedCapabilities = setOf(SensorDataType.SPEED, SensorDataType.CADENCE)
+                        ),
+                        DiscoveredSensor(
+                            name = "Stages Power L",
+                            address = "F1:22:33:44:55:66",
+                            rssi = -60,
+                            detectedCapabilities = setOf(SensorDataType.POWER, SensorDataType.CADENCE)
+                        ),
+                        DiscoveredSensor(
+                            name = "Wahoo SPEED & CADENCE",
+                            address = "C4:7D:CC:12:34:56",
+                            rssi = -62,
+                            detectedCapabilities = setOf(SensorDataType.SPEED, SensorDataType.CADENCE)
+                        ),
+                        DiscoveredSensor(
+                            name = "Polar H10 9A28B1",
+                            address = "00:22:D0:9A:28:B1",
+                            rssi = -55,
+                            detectedCapabilities = setOf(SensorDataType.HEART_RATE)
                         )
-                        SensorType.POWER -> listOf(
-                            DiscoveredSensor("Assioma DUO-L", "F2:15:AA:77:88:99", -58, type),
-                            DiscoveredSensor("Stages Power R", "A0:BC:33:44:55:66", -70, type),
-                            DiscoveredSensor("4iiii Precision 3", "B5:22:99:88:77:66", -79, type)
-                        )
-                        SensorType.HEART_RATE -> listOf(
-                            DiscoveredSensor("Polar H10 9A28B1", "00:22:D0:9A:28:B1", -55, type),
-                            DiscoveredSensor("Garmin HRM-Pro", "C8:FD:19:55:44:33", -68, type),
-                            DiscoveredSensor("Wahoo TICKR", "E4:5F:01:23:45:67", -76, type)
-                        )
-                    }
+                    )
                     _discoveredSensors.value = demoSensors
+                    _isScanning.value = false
                 }
             }
         }
@@ -214,37 +302,67 @@ class BleSensorManager(private val context: Context) {
         _isScanning.value = false
     }
 
-    fun connectDevice(address: String, name: String, type: SensorType) {
+    fun connectDevice(
+        address: String,
+        name: String,
+        enabledDataTypes: Set<SensorDataType> = setOf(
+            SensorDataType.SPEED,
+            SensorDataType.CADENCE,
+            SensorDataType.POWER,
+            SensorDataType.HEART_RATE
+        )
+    ) {
         val adapter = bluetoothAdapter ?: return
         if (!hasConnectPermission()) return
 
-        // If already connected, do nothing
-        if (activeClients.containsKey(address)) return
+        // If already connected, update enabled types
+        activeClients[address]?.let { client ->
+            client.enabledDataTypes = enabledDataTypes
+            updateConnectionFlags()
+            return
+        }
 
         val device = try {
             adapter.getRemoteDevice(address)
         } catch (e: IllegalArgumentException) {
-            // Address might be a simulated MAC on emulator
-            when (type) {
-                SensorType.CADENCE_SPEED -> _isCadenceConnected.value = true
-                SensorType.POWER -> _isPowerConnected.value = true
-                SensorType.HEART_RATE -> _isHeartRateConnected.value = true
-            }
+            // Simulated MAC on emulator
+            if (enabledDataTypes.contains(SensorDataType.SPEED)) _isSpeedConnected.value = true
+            if (enabledDataTypes.contains(SensorDataType.CADENCE)) _isCadenceConnected.value = true
+            if (enabledDataTypes.contains(SensorDataType.POWER)) _isPowerConnected.value = true
+            if (enabledDataTypes.contains(SensorDataType.HEART_RATE)) _isHeartRateConnected.value = true
             return
         }
 
         val client = SingleSensorBleManager(
             context = context,
-            sensorType = type,
-            onCadenceUpdate = { rpm -> _cadenceFlow.value = rpm },
-            onPowerUpdate = { watts -> _powerFlow.value = watts },
-            onHeartRateUpdate = { hr -> _heartRateFlow.value = hr },
-            onConnectionStateChange = { connected ->
-                when (type) {
-                    SensorType.CADENCE_SPEED -> _isCadenceConnected.value = connected
-                    SensorType.POWER -> _isPowerConnected.value = connected
-                    SensorType.HEART_RATE -> _isHeartRateConnected.value = connected
+            wheelCircumferenceMm = currentWheelCircumferenceMm,
+            enabledDataTypes = enabledDataTypes,
+            onCadenceUpdate = { rpm ->
+                if (enabledDataTypes.contains(SensorDataType.CADENCE)) {
+                    _cadenceFlow.value = rpm
                 }
+            },
+            onSpeedUpdate = { speedKmh, distDelta ->
+                if (enabledDataTypes.contains(SensorDataType.SPEED)) {
+                    _speedFlow.value = speedKmh
+                    _distanceDeltaFlow.value = distDelta
+                }
+            },
+            onPowerUpdate = { watts ->
+                if (enabledDataTypes.contains(SensorDataType.POWER)) {
+                    _powerFlow.value = watts
+                }
+            },
+            onHeartRateUpdate = { hr ->
+                if (enabledDataTypes.contains(SensorDataType.HEART_RATE)) {
+                    _heartRateFlow.value = hr
+                }
+            },
+            onConnectionStateChange = { _ ->
+                updateConnectionFlags()
+            },
+            onDetectedCapabilities = { _ ->
+                updateConnectionFlags()
             }
         )
 
@@ -258,20 +376,7 @@ class BleSensorManager(private val context: Context) {
     fun disconnectDevice(address: String) {
         activeClients.remove(address)?.let { client ->
             client.disconnect().enqueue()
-            when (client.sensorType) {
-                SensorType.CADENCE_SPEED -> {
-                    _isCadenceConnected.value = false
-                    _cadenceFlow.value = 0
-                }
-                SensorType.POWER -> {
-                    _isPowerConnected.value = false
-                    _powerFlow.value = 0
-                }
-                SensorType.HEART_RATE -> {
-                    _isHeartRateConnected.value = false
-                    _heartRateFlow.value = 0
-                }
-            }
+            updateConnectionFlags()
         }
     }
 
@@ -280,9 +385,11 @@ class BleSensorManager(private val context: Context) {
         activeClients.values.forEach { it.disconnect().enqueue() }
         activeClients.clear()
         _isCadenceConnected.value = false
+        _isSpeedConnected.value = false
         _isPowerConnected.value = false
         _isHeartRateConnected.value = false
         _cadenceFlow.value = 0
+        _speedFlow.value = 0f
         _powerFlow.value = 0
         _heartRateFlow.value = 0
     }

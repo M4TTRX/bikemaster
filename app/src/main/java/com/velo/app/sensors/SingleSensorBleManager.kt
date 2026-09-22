@@ -4,36 +4,58 @@ import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCharacteristic
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
+import com.velo.app.model.SensorDataType
 import no.nordicsemi.android.ble.BleManager
 import no.nordicsemi.android.ble.observer.ConnectionObserver
 import java.util.UUID
 
 class SingleSensorBleManager(
     context: Context,
-    val sensorType: SensorType,
+    var wheelCircumferenceMm: Int = 2105,
+    var enabledDataTypes: Set<SensorDataType> = setOf(
+        SensorDataType.SPEED,
+        SensorDataType.CADENCE,
+        SensorDataType.POWER,
+        SensorDataType.HEART_RATE
+    ),
     private val onCadenceUpdate: (Int) -> Unit = {},
+    private val onSpeedUpdate: (speedKmh: Float, distanceDeltaMeters: Double) -> Unit = { _, _ -> },
     private val onPowerUpdate: (Int) -> Unit = {},
     private val onHeartRateUpdate: (Int) -> Unit = {},
-    private val onConnectionStateChange: (Boolean) -> Unit = {}
+    private val onConnectionStateChange: (Boolean) -> Unit = {},
+    private val onDetectedCapabilities: (Set<SensorDataType>) -> Unit = {}
 ) : BleManager(context) {
 
     companion object {
         val CSC_SERVICE_UUID: UUID = UUID.fromString("00001816-0000-1000-8000-00805f9b34fb")
         val CSC_MEASUREMENT_UUID: UUID = UUID.fromString("00002A5B-0000-1000-8000-00805f9b34fb")
 
-        val POWER_SERVICE_UUID: UUID = UUID.fromString("00001818-0000-1000-8000-00805f9b34fb")
-        val POWER_MEASUREMENT_UUID: UUID = UUID.fromString("00002A63-0000-1000-8000-00805f9b34fb")
-
         val HRM_SERVICE_UUID: UUID = UUID.fromString("0000180D-0000-1000-8000-00805f9b34fb")
         val HRM_MEASUREMENT_UUID: UUID = UUID.fromString("00002A37-0000-1000-8000-00805f9b34fb")
+
+        val CYCLING_POWER_SERVICE_UUID: UUID = UUID.fromString("00001818-0000-1000-8000-00805f9b34fb")
+        val CYCLING_POWER_MEASUREMENT_UUID: UUID = UUID.fromString("00002A63-0000-1000-8000-00805f9b34fb")
     }
 
     private var cscCharacteristic: BluetoothGattCharacteristic? = null
-    private var powerCharacteristic: BluetoothGattCharacteristic? = null
     private var hrmCharacteristic: BluetoothGattCharacteristic? = null
+    private var powerCharacteristic: BluetoothGattCharacteristic? = null
 
     private var lastCrankRevs: Int? = null
     private var lastCrankTime: Int? = null
+
+    private var lastPowerCrankRevs: Int? = null
+    private var lastPowerCrankTime: Int? = null
+
+    private var lastWheelRevs: Long? = null
+    private var lastWheelTime: Int? = null
+
+    private val timeoutHandler = Handler(Looper.getMainLooper())
+    private val cadenceTimeoutRunnable = Runnable { onCadenceUpdate(0) }
+    private val speedTimeoutRunnable = Runnable { onSpeedUpdate(0f, 0.0) }
+    private val powerTimeoutRunnable = Runnable { onPowerUpdate(0) }
 
     init {
         setConnectionObserver(object : ConnectionObserver {
@@ -42,6 +64,7 @@ class SingleSensorBleManager(
             override fun onDeviceConnected(device: BluetoothDevice) {}
 
             override fun onDeviceFailedToConnect(device: BluetoothDevice, reason: Int) {
+                clearTimeouts()
                 onConnectionStateChange(false)
             }
 
@@ -52,33 +75,61 @@ class SingleSensorBleManager(
             override fun onDeviceDisconnecting(device: BluetoothDevice) {}
 
             override fun onDeviceDisconnected(device: BluetoothDevice, reason: Int) {
+                clearTimeouts()
                 onConnectionStateChange(false)
             }
         })
+    }
+
+    private fun clearTimeouts() {
+        timeoutHandler.removeCallbacks(cadenceTimeoutRunnable)
+        timeoutHandler.removeCallbacks(speedTimeoutRunnable)
+        timeoutHandler.removeCallbacks(powerTimeoutRunnable)
     }
 
     @Deprecated("Overriding Nordic BleManager deprecated method")
     @Suppress("DEPRECATION")
     override fun getGattCallback(): BleManagerGattCallback = object : BleManagerGattCallback() {
         override fun isRequiredServiceSupported(gatt: BluetoothGatt): Boolean {
+            val capabilities = mutableSetOf<SensorDataType>()
+
             val cscService = gatt.getService(CSC_SERVICE_UUID)
             if (cscService != null) {
                 cscCharacteristic = cscService.getCharacteristic(CSC_MEASUREMENT_UUID)
+                if (cscCharacteristic != null) {
+                    capabilities.add(SensorDataType.SPEED)
+                    capabilities.add(SensorDataType.CADENCE)
+                }
             }
-            val powerService = gatt.getService(POWER_SERVICE_UUID)
-            if (powerService != null) {
-                powerCharacteristic = powerService.getCharacteristic(POWER_MEASUREMENT_UUID)
-            }
+
             val hrmService = gatt.getService(HRM_SERVICE_UUID)
             if (hrmService != null) {
                 hrmCharacteristic = hrmService.getCharacteristic(HRM_MEASUREMENT_UUID)
+                if (hrmCharacteristic != null) {
+                    capabilities.add(SensorDataType.HEART_RATE)
+                }
             }
-            return cscCharacteristic != null || powerCharacteristic != null || hrmCharacteristic != null
+
+            val powerService = gatt.getService(CYCLING_POWER_SERVICE_UUID)
+            if (powerService != null) {
+                powerCharacteristic = powerService.getCharacteristic(CYCLING_POWER_MEASUREMENT_UUID)
+                if (powerCharacteristic != null) {
+                    capabilities.add(SensorDataType.POWER)
+                    capabilities.add(SensorDataType.CADENCE)
+                }
+            }
+
+            if (capabilities.isNotEmpty()) {
+                onDetectedCapabilities(capabilities)
+            }
+
+            return cscCharacteristic != null || hrmCharacteristic != null || powerCharacteristic != null
         }
 
         @Deprecated("Overriding Nordic BleManager deprecated method")
         @Suppress("DEPRECATION")
         override fun initialize() {
+            // 1. Cycling Speed and Cadence (0x1816)
             cscCharacteristic?.let { char ->
                 setNotificationCallback(char).with { _, data ->
                     val rawBytes = data.value
@@ -88,10 +139,44 @@ class SingleSensorBleManager(
                         val hasCrank = (flags and 0x02) != 0
 
                         var offset = 1
-                        if (hasWheel) {
-                            offset += 6 // 4 bytes wheel revs + 2 bytes wheel event time
+
+                        // Parse Wheel Revolution Data if present
+                        if (hasWheel && rawBytes.size >= offset + 6) {
+                            val wheelRevs = (rawBytes[offset].toLong() and 0xFF) or
+                                    ((rawBytes[offset + 1].toLong() and 0xFF) shl 8) or
+                                    ((rawBytes[offset + 2].toLong() and 0xFF) shl 16) or
+                                    ((rawBytes[offset + 3].toLong() and 0xFF) shl 24)
+                            val wheelTime = (rawBytes[offset + 4].toInt() and 0xFF) or
+                                    ((rawBytes[offset + 5].toInt() and 0xFF) shl 8)
+
+                            val prevRevs = lastWheelRevs
+                            val prevTime = lastWheelTime
+
+                            if (prevRevs != null && prevTime != null) {
+                                val dRevs = (wheelRevs - prevRevs) and 0xFFFFFFFFL
+                                val dTime = (wheelTime - prevTime) and 0xFFFF
+
+                                if (dTime > 0 && dRevs > 0) {
+                                    val timeSec = dTime.toDouble() / 1024.0
+                                    val distMeters = dRevs.toDouble() * (wheelCircumferenceMm.toDouble() / 1000.0)
+                                    val speedMps = distMeters / timeSec
+                                    val speedKmh = (speedMps * 3.6).toFloat()
+
+                                    if (speedKmh in 0.5f..150f && enabledDataTypes.contains(SensorDataType.SPEED)) {
+                                        onSpeedUpdate(speedKmh, distMeters)
+                                        timeoutHandler.removeCallbacks(speedTimeoutRunnable)
+                                        timeoutHandler.postDelayed(speedTimeoutRunnable, 2500L)
+                                    }
+                                } else if (dRevs == 0L && enabledDataTypes.contains(SensorDataType.SPEED)) {
+                                    onSpeedUpdate(0f, 0.0)
+                                }
+                            }
+                            lastWheelRevs = wheelRevs
+                            lastWheelTime = wheelTime
+                            offset += 6
                         }
 
+                        // Parse Crank Revolution Data if present
                         if (hasCrank && rawBytes.size >= offset + 4) {
                             val crankRevs = (rawBytes[offset].toInt() and 0xFF) or
                                     ((rawBytes[offset + 1].toInt() and 0xFF) shl 8)
@@ -104,9 +189,15 @@ class SingleSensorBleManager(
                             if (prevRevs != null && prevTime != null) {
                                 val dRevs = (crankRevs - prevRevs) and 0xFFFF
                                 val dTime = (crankTime - prevTime) and 0xFFFF
-                                if (dTime > 0 && dRevs >= 0) {
+                                if (dTime > 0 && dRevs > 0) {
                                     val rpm = ((dRevs.toDouble() / (dTime.toDouble() / 1024.0)) * 60.0).toInt()
-                                    onCadenceUpdate(rpm.coerceIn(0, 220))
+                                    if (enabledDataTypes.contains(SensorDataType.CADENCE)) {
+                                        onCadenceUpdate(rpm.coerceIn(0, 220))
+                                        timeoutHandler.removeCallbacks(cadenceTimeoutRunnable)
+                                        timeoutHandler.postDelayed(cadenceTimeoutRunnable, 2500L)
+                                    }
+                                } else if (dRevs == 0 && enabledDataTypes.contains(SensorDataType.CADENCE)) {
+                                    onCadenceUpdate(0)
                                 }
                             }
                             lastCrankRevs = crankRevs
@@ -117,17 +208,7 @@ class SingleSensorBleManager(
                 enableNotifications(char).enqueue()
             }
 
-            powerCharacteristic?.let { char ->
-                setNotificationCallback(char).with { _, data ->
-                    val rawBytes = data.value
-                    if (rawBytes != null && rawBytes.size >= 4) {
-                        val power = (rawBytes[2].toInt() and 0xFF) or (rawBytes[3].toInt() shl 8)
-                        onPowerUpdate(power.coerceAtLeast(0))
-                    }
-                }
-                enableNotifications(char).enqueue()
-            }
-
+            // 2. Heart Rate Measurement (0x180D)
             hrmCharacteristic?.let { char ->
                 setNotificationCallback(char).with { _, data ->
                     val rawBytes = data.value
@@ -139,7 +220,64 @@ class SingleSensorBleManager(
                         } else {
                             rawBytes[1].toInt() and 0xFF
                         }
-                        onHeartRateUpdate(hr)
+                        if (enabledDataTypes.contains(SensorDataType.HEART_RATE)) {
+                            onHeartRateUpdate(hr)
+                        }
+                    }
+                }
+                enableNotifications(char).enqueue()
+            }
+
+            // 3. Cycling Power Measurement (0x1818)
+            powerCharacteristic?.let { char ->
+                setNotificationCallback(char).with { _, data ->
+                    val rawBytes = data.value
+                    if (rawBytes != null && rawBytes.size >= 4) {
+                        val flags = (rawBytes[0].toInt() and 0xFF) or ((rawBytes[1].toInt() and 0xFF) shl 8)
+                        val instantaneousPower = (rawBytes[2].toInt() and 0xFF) or (rawBytes[3].toInt() shl 8)
+                        val watts = instantaneousPower.coerceAtLeast(0)
+
+                        if (enabledDataTypes.contains(SensorDataType.POWER)) {
+                            onPowerUpdate(watts)
+                            timeoutHandler.removeCallbacks(powerTimeoutRunnable)
+                            timeoutHandler.postDelayed(powerTimeoutRunnable, 2500L)
+                        }
+
+                        // Check if Crank Revolution Data is included in Power packet (bit 5)
+                        val hasCrank = (flags and 0x20) != 0
+                        if (hasCrank) {
+                            var offset = 4
+                            if ((flags and 0x01) != 0) offset += 1 // Pedal power balance
+                            if ((flags and 0x04) != 0) offset += 2 // Accumulated torque
+                            if ((flags and 0x10) != 0) offset += 6 // Wheel revolution data
+
+                            if (rawBytes.size >= offset + 4) {
+                                val crankRevs = (rawBytes[offset].toInt() and 0xFF) or
+                                        ((rawBytes[offset + 1].toInt() and 0xFF) shl 8)
+                                val crankTime = (rawBytes[offset + 2].toInt() and 0xFF) or
+                                        ((rawBytes[offset + 3].toInt() and 0xFF) shl 8)
+
+                                val prevRevs = lastPowerCrankRevs
+                                val prevTime = lastPowerCrankTime
+
+                                if (prevRevs != null && prevTime != null) {
+                                    val dRevs = (crankRevs - prevRevs) and 0xFFFF
+                                    val dTime = (crankTime - prevTime) and 0xFFFF
+                                    if (dTime > 0 && dRevs > 0) {
+                                        val rpm = ((dRevs.toDouble() / (dTime.toDouble() / 1024.0)) * 60.0).toInt()
+                                        if (enabledDataTypes.contains(SensorDataType.CADENCE)) {
+                                            onCadenceUpdate(rpm.coerceIn(0, 220))
+                                            timeoutHandler.removeCallbacks(cadenceTimeoutRunnable)
+                                            timeoutHandler.postDelayed(cadenceTimeoutRunnable, 2500L)
+                                        }
+                                    } else if (dRevs == 0 && enabledDataTypes.contains(SensorDataType.CADENCE)) {
+                                        onCadenceUpdate(0)
+                                    }
+                                }
+                                lastPowerCrankRevs = crankRevs
+                                lastPowerCrankTime = crankTime
+                            }
+                        }
                     }
                 }
                 enableNotifications(char).enqueue()
@@ -148,11 +286,17 @@ class SingleSensorBleManager(
 
         override fun onServicesInvalidated() {
             cscCharacteristic = null
-            powerCharacteristic = null
             hrmCharacteristic = null
+            powerCharacteristic = null
             lastCrankRevs = null
             lastCrankTime = null
+            lastPowerCrankRevs = null
+            lastPowerCrankTime = null
+            lastWheelRevs = null
+            lastWheelTime = null
+            clearTimeouts()
             onCadenceUpdate(0)
+            onSpeedUpdate(0f, 0.0)
             onPowerUpdate(0)
             onHeartRateUpdate(0)
             onConnectionStateChange(false)

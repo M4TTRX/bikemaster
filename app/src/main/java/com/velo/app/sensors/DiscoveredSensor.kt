@@ -1,14 +1,10 @@
 package com.velo.app.sensors
 
+import com.velo.app.model.SensorDataType
+
 data class DiscoveredSensor(
     val name: String,
     val address: String,
     val rssi: Int,
-    val type: SensorType
+    val detectedCapabilities: Set<SensorDataType> = emptySet()
 )
-
-enum class SensorType(val title: String) {
-    HEART_RATE("Heart Rate"),
-    CADENCE_SPEED("Cadence & Speed (CSC)"),
-    POWER("Cycling Power")
-}

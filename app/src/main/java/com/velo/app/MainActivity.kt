@@ -49,6 +49,11 @@ class MainActivity : ComponentActivity() {
                 val telemetry by viewModel.telemetry.collectAsStateWithLifecycle()
                 val unitSystem by viewModel.unitSystem.collectAsStateWithLifecycle()
                 val rideStatus by viewModel.rideStatus.collectAsStateWithLifecycle()
+                val speedSource by viewModel.speedSource.collectAsStateWithLifecycle()
+                val wheelCircumferenceMm by viewModel.wheelCircumferenceMm.collectAsStateWithLifecycle()
+                val pairedBleDevices by viewModel.pairedBleDevices.collectAsStateWithLifecycle()
+                val cockpitTiles by viewModel.cockpitTiles.collectAsStateWithLifecycle()
+                val cockpitTileSources by viewModel.cockpitTileSources.collectAsStateWithLifecycle()
                 val isMockSimulatorEnabled by viewModel.isMockSimulatorEnabled.collectAsStateWithLifecycle()
                 val isKeepScreenOn by viewModel.isKeepScreenOn.collectAsStateWithLifecycle()
                 val discoveredSensors by viewModel.discoveredSensors.collectAsStateWithLifecycle()
@@ -68,19 +73,32 @@ class MainActivity : ComponentActivity() {
                 MainScreen(
                     telemetry = telemetry,
                     unitSystem = unitSystem,
+                    speedSource = speedSource,
+                    wheelCircumferenceMm = wheelCircumferenceMm,
+                    pairedBleDevices = pairedBleDevices,
+                    cockpitTiles = cockpitTiles,
+                    cockpitTileSources = cockpitTileSources,
                     rideStatus = rideStatus,
                     isMockSimulatorEnabled = isMockSimulatorEnabled,
                     isKeepScreenOn = isKeepScreenOn,
+                    isEmulator = viewModel.isEmulator,
                     discoveredSensors = discoveredSensors,
                     isScanning = isScanning,
-                    onStartScan = { viewModel.startSensorScan(it) },
+                    onStartScan = { viewModel.startSensorScan() },
                     onPairSensor = { viewModel.pairSensor(it) },
+                    onUnpairSensor = { viewModel.unpairSensor(it) },
+                    onUpdateSensorTypes = { address, types -> viewModel.updateSensorEnabledTypes(address, types) },
+                    onTileConfigured = { slot, metric, sourceId -> viewModel.onTileConfigured(slot, metric, sourceId) },
+                    onSpeedSourceChange = { viewModel.onSpeedSourceChange(it) },
+                    onWheelCircumferenceChange = { viewModel.onWheelCircumferenceChange(it) },
                     onUnitSystemChange = { viewModel.onUnitSystemChange(it) },
                     onMockSimulatorChange = { viewModel.onMockSimulatorChange(it) },
                     onKeepScreenOnChange = { viewModel.onKeepScreenOnChange(it) },
+                    onStartClick = { viewModel.onStartClick() },
                     onPauseClick = { viewModel.onPauseClick() },
                     onResumeClick = { viewModel.onResumeClick() },
-                    onFinishClick = { viewModel.onFinishClick() }
+                    onFinishClick = { viewModel.onFinishClick() },
+                    onResetClick = { viewModel.onResetClick() }
                 )
             }
         }

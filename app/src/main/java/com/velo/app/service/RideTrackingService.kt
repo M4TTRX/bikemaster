@@ -90,17 +90,15 @@ class RideTrackingService : Service() {
     }
 
     private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "Ride Tracking",
-                NotificationManager.IMPORTANCE_LOW
-            ).apply {
-                description = "Live cycling ride telemetry and GPS tracking"
-            }
-            val manager = getSystemService(NotificationManager::class.java)
-            manager.createNotificationChannel(channel)
+        val channel = NotificationChannel(
+            CHANNEL_ID,
+            "Ride Tracking",
+            NotificationManager.IMPORTANCE_LOW
+        ).apply {
+            description = "Live cycling ride telemetry and GPS tracking"
         }
+        val manager = getSystemService(NotificationManager::class.java)
+        manager.createNotificationChannel(channel)
     }
 
     override fun onDestroy() {
