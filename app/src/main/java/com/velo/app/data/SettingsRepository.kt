@@ -22,6 +22,7 @@ class SettingsRepository(private val context: Context) {
         val KEY_MOCK_SIMULATOR = booleanPreferencesKey("mock_simulator_enabled")
         val KEY_KEEP_SCREEN_ON = booleanPreferencesKey("keep_screen_on")
         val KEY_PAIRED_SENSORS = stringSetPreferencesKey("paired_sensor_types")
+        val KEY_PAIRED_BLE_DEVICES = stringSetPreferencesKey("paired_ble_devices")
     }
 
     val unitSystemFlow: Flow<UnitSystem> = context.dataStore.data.map { preferences ->
@@ -50,6 +51,24 @@ class SettingsRepository(private val context: Context) {
                 null
             }
         }.toSet()
+    }
+
+    val pairedBleDevicesFlow: Flow<List<PairedBleDevice>> = context.dataStore.data.map { preferences ->
+        val rawSet = preferences[KEY_PAIRED_BLE_DEVICES] ?: emptySet()
+        rawSet.mapNotNull { encoded ->
+            try {
+                val parts = encoded.split("|", limit = 3)
+                if (parts.size >= 3) {
+                    PairedBleDevice(
+                        type = SensorType.valueOf(parts[0]),
+                        address = parts[1],
+                        name = parts[2]
+                    )
+                } else null
+            } catch (e: Exception) {
+                null
+            }
+        }
     }
 
     suspend fun setUnitSystem(unitSystem: UnitSystem) {
@@ -83,4 +102,43 @@ class SettingsRepository(private val context: Context) {
             preferences[KEY_PAIRED_SENSORS] = current - type.name
         }
     }
+
+    suspend fun savePairedDevice(device: PairedBleDevice) {
+        pairSensor(device.type)
+        context.dataStore.edit { preferences ->
+            val current = preferences[KEY_PAIRED_BLE_DEVICES] ?: emptySet()
+            // Remove any existing device of the same type or address
+            val filtered = current.filterNot { it.startsWith("${device.type.name}|") || it.contains("|${device.address}|") }
+            val encoded = "${device.type.name}|${device.address}|${device.name}"
+            preferences[KEY_PAIRED_BLE_DEVICES] = (filtered + encoded).toSet()
+        }
+    }
+
+    suspend fun removePairedDevice(address: String) {
+        context.dataStore.edit { preferences ->
+            val current = preferences[KEY_PAIRED_BLE_DEVICES] ?: emptySet()
+            val removedDevice = current.firstOrNull { it.contains("|$address|") }
+            if (removedDevice != null) {
+                val typeName = removedDevice.substringBefore("|")
+                try {
+                    val type = SensorType.valueOf(typeName)
+                    val remainingTypes = current.filterNot { it == removedDevice }
+                        .mapNotNull {
+                            try { SensorType.valueOf(it.substringBefore("|")) } catch (e: Exception) { null }
+                        }
+                    if (!remainingTypes.contains(type)) {
+                        val currentTypes = preferences[KEY_PAIRED_SENSORS] ?: emptySet()
+                        preferences[KEY_PAIRED_SENSORS] = currentTypes - type.name
+                    }
+                } catch (e: Exception) {}
+            }
+            preferences[KEY_PAIRED_BLE_DEVICES] = current.filterNot { it.contains("|$address|") }.toSet()
+        }
+    }
 }
+
+data class PairedBleDevice(
+    val type: SensorType,
+    val address: String,
+    val name: String
+)

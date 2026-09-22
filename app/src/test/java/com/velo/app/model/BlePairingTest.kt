@@ -49,4 +49,23 @@ class BlePairingTest {
         assertTrue(connectedTelemetry.isBlePowerConnected)
         assertTrue(connectedTelemetry.isWearOsConnected)
     }
+
+    @Test
+    fun testPairedBleDeviceEncoding() {
+        val device = com.velo.app.data.PairedBleDevice(
+            type = SensorType.CADENCE_SPEED,
+            address = "C4:7D:CC:12:34:56",
+            name = "Wahoo SPEED v2"
+        )
+        val encoded = "${device.type.name}|${device.address}|${device.name}"
+        assertEquals("CADENCE_SPEED|C4:7D:CC:12:34:56|Wahoo SPEED v2", encoded)
+
+        val parts = encoded.split("|", limit = 3)
+        val decoded = com.velo.app.data.PairedBleDevice(
+            type = SensorType.valueOf(parts[0]),
+            address = parts[1],
+            name = parts[2]
+        )
+        assertEquals(device, decoded)
+    }
 }

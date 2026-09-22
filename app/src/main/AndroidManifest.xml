@@ -15,7 +15,7 @@
     <!-- Bluetooth LE permissions -->
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
-    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
     <!-- Keep screen awake on handlebars -->
@@ -24,9 +24,9 @@
     <application
         android:name=".VeloApplication"
         android:allowBackup="true"
-        android:icon="@android:drawable/sym_def_app_icon"
+        android:icon="@mipmap/ic_launcher"
         android:label="Velo"
-        android:roundIcon="@android:drawable/sym_def_app_icon"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.NoActionBar">
         

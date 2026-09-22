@@ -73,7 +73,10 @@ class DefaultRideRepository(
     private var timerJob: Job? = null
     private var lastLocation: Location? = null
 
-    override val telemetry: StateFlow<RideTelemetry> = combine(
+    override val discoveredSensors: StateFlow<List<DiscoveredSensor>> = bleSensorManager.discoveredSensors
+    override val isScanning: StateFlow<Boolean> = bleSensorManager.isScanning
+
+    private val baseFlow = combine(
         _useSimulator,
         simulator.telemetry,
         _realTelemetry,
@@ -84,6 +87,19 @@ class DefaultRideRepository(
             isBleCadenceConnected = paired.contains(SensorType.CADENCE_SPEED) || base.isBleCadenceConnected,
             isBlePowerConnected = paired.contains(SensorType.POWER) || base.isBlePowerConnected,
             isWearOsConnected = paired.contains(SensorType.HEART_RATE) || base.isWearOsConnected
+        )
+    }
+
+    override val telemetry: StateFlow<RideTelemetry> = combine(
+        baseFlow,
+        bleSensorManager.isCadenceConnected,
+        bleSensorManager.isPowerConnected,
+        bleSensorManager.isHeartRateConnected
+    ) { base, bleCadConn, blePwrConn, bleHrConn ->
+        base.copy(
+            isBleCadenceConnected = bleCadConn || base.isBleCadenceConnected,
+            isBlePowerConnected = blePwrConn || base.isBlePowerConnected,
+            isWearOsConnected = bleHrConn || base.isWearOsConnected
         )
     }.stateIn(
         scope = scope,
@@ -101,34 +117,36 @@ class DefaultRideRepository(
                     _realTelemetry.update {
                         it.copy(
                             cadenceRpm = cad,
-                            powerWatts = pwr,
-                            isBleCadenceConnected = cad > 0,
-                            isBlePowerConnected = pwr > 0
+                            powerWatts = pwr
                         )
                     }
                 }
             }
         }
 
-        // Collect Wear OS heart rate
+        // Collect BLE & Wear OS heart rate
         scope.launch {
-            wearOsManager.wearOsHeartRate.collect { hr ->
+            combine(bleSensorManager.heartRateFlow, wearOsManager.wearOsHeartRate) { bleHr, wearHr ->
+                if (bleHr > 0) bleHr else wearHr
+            }.collect { hr ->
                 if (!_useSimulator.value) {
                     _realTelemetry.update {
                         it.copy(
-                            heartRateBpm = hr,
-                            isWearOsConnected = hr > 0
+                            heartRateBpm = hr
                         )
                     }
                 }
             }
         }
 
-        // Restore paired sensors from settings DataStore
+        // Restore paired sensors from settings DataStore and auto-connect
         if (settingsRepository != null) {
             scope.launch {
-                settingsRepository.pairedSensorsFlow.collect { savedSet ->
-                    _pairedSensors.value = savedSet
+                settingsRepository.pairedBleDevicesFlow.collect { savedDevices ->
+                    _pairedSensors.value = savedDevices.map { it.type }.toSet()
+                    savedDevices.forEach { device ->
+                        bleSensorManager.connectDevice(device.address, device.name, device.type)
+                    }
                 }
             }
         }
@@ -201,12 +219,6 @@ class DefaultRideRepository(
         lastLocation = null
     }
 
-    private val _discoveredSensors = MutableStateFlow<List<DiscoveredSensor>>(emptyList())
-    override val discoveredSensors: StateFlow<List<DiscoveredSensor>> = _discoveredSensors.asStateFlow()
-
-    private val _isScanning = MutableStateFlow(false)
-    override val isScanning: StateFlow<Boolean> = _isScanning.asStateFlow()
-
     override fun startRide(useSimulator: Boolean) {
         _useSimulator.value = useSimulator
         _rideStatus.value = RideStatus.RECORDING
@@ -247,37 +259,16 @@ class DefaultRideRepository(
     }
 
     override fun startSensorScan(type: SensorType) {
-        _isScanning.value = true
-        scope.launch {
-            // Emulate device discovery for both emulator testing and BLE scanning
-            kotlinx.coroutines.delay(1200L)
-            val demoSensors = when (type) {
-                SensorType.CADENCE_SPEED -> listOf(
-                    DiscoveredSensor("Wahoo SPEED v2", "C4:7D:CC:12:34:56", -62, type),
-                    DiscoveredSensor("Garmin CADENCE 2", "D1:9A:88:AB:CD:EF", -74, type),
-                    DiscoveredSensor("Magene S3+", "E0:44:11:22:33:44", -81, type)
-                )
-                SensorType.POWER -> listOf(
-                    DiscoveredSensor("Assioma DUO-L", "F2:15:AA:77:88:99", -58, type),
-                    DiscoveredSensor("Stages Power R", "A0:BC:33:44:55:66", -70, type),
-                    DiscoveredSensor("4iiii Precision 3", "B5:22:99:88:77:66", -79, type)
-                )
-                SensorType.HEART_RATE -> listOf(
-                    DiscoveredSensor("Polar H10 9A28B1", "00:22:D0:9A:28:B1", -55, type),
-                    DiscoveredSensor("Garmin HRM-Pro", "C8:FD:19:55:44:33", -68, type),
-                    DiscoveredSensor("Wahoo TICKR", "E4:5F:01:23:45:67", -76, type)
-                )
-            }
-            _discoveredSensors.value = demoSensors
-            _isScanning.value = false
-        }
+        bleSensorManager.startScanning(type, isMockEnabled = _useSimulator.value)
     }
 
     override fun stopSensorScan() {
-        _isScanning.value = false
+        bleSensorManager.stopScanning()
     }
 
     override fun pairSensor(sensor: DiscoveredSensor) {
+        // Connect to physical BLE device
+        bleSensorManager.connectDevice(sensor.address, sensor.name, sensor.type)
         _pairedSensors.update { it + sensor.type }
         _realTelemetry.update { current ->
             when (sensor.type) {
@@ -288,7 +279,13 @@ class DefaultRideRepository(
         }
         if (settingsRepository != null) {
             scope.launch {
-                settingsRepository.pairSensor(sensor.type)
+                settingsRepository.savePairedDevice(
+                    PairedBleDevice(
+                        type = sensor.type,
+                        address = sensor.address,
+                        name = sensor.name
+                    )
+                )
             }
         }
         stopSensorScan()
