@@ -59,6 +59,7 @@ dependencies {
 
     implementation(libs.play.services.location)
     implementation(libs.play.services.wearable)
+    implementation("androidx.wear:wear-remote-interactions:1.1.0")
     implementation(libs.nordic.ble)
     implementation(libs.nordic.ble.ktx)
 

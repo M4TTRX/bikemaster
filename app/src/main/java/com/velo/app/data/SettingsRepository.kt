@@ -12,6 +12,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.velo.app.model.MetricType
 import com.velo.app.model.SensorDataType
 import com.velo.app.model.SpeedSource
+import com.velo.app.model.ThemeMode
 import com.velo.app.model.UnitSystem
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -28,6 +29,7 @@ data class PairedBleDevice(
 class SettingsRepository(private val context: Context) {
 
     companion object {
+        val KEY_THEME_MODE = stringPreferencesKey("theme_mode")
         val KEY_UNIT_SYSTEM = stringPreferencesKey("unit_system")
         val KEY_MOCK_SIMULATOR = booleanPreferencesKey("mock_simulator_enabled")
         val KEY_KEEP_SCREEN_ON = booleanPreferencesKey("keep_screen_on")
@@ -45,6 +47,46 @@ class SettingsRepository(private val context: Context) {
             MetricType.HEART_RATE,
             MetricType.MAX_SPEED
         )
+
+        /**
+         * Determines the device default unit system using Android ICU LocaleData if available,
+         * falling back to country code detection (US/LR/MM/GB -> IMPERIAL), and defaulting to METRIC.
+         */
+        fun getDefaultDeviceUnitSystem(): UnitSystem {
+            return try {
+                val uLocale = android.icu.util.ULocale.getDefault()
+                val measurementSystem = android.icu.util.LocaleData.getMeasurementSystem(uLocale)
+                if (measurementSystem == android.icu.util.LocaleData.MeasurementSystem.US ||
+                    measurementSystem == android.icu.util.LocaleData.MeasurementSystem.UK
+                ) {
+                    UnitSystem.IMPERIAL
+                } else {
+                    UnitSystem.METRIC
+                }
+            } catch (e: Throwable) {
+                try {
+                    val country = java.util.Locale.getDefault().country.uppercase(java.util.Locale.US)
+                    if (country in listOf("US", "LR", "MM", "GB")) {
+                        UnitSystem.IMPERIAL
+                    } else {
+                        UnitSystem.METRIC
+                    }
+                } catch (e2: Throwable) {
+                    UnitSystem.METRIC
+                }
+            }
+        }
+    }
+
+    val defaultUnitSystem: UnitSystem = getDefaultDeviceUnitSystem()
+
+    val themeModeFlow: Flow<ThemeMode> = context.dataStore.data.map { preferences ->
+        val name = preferences[KEY_THEME_MODE] ?: ThemeMode.DARK.name
+        try {
+            ThemeMode.valueOf(name)
+        } catch (e: Exception) {
+            ThemeMode.DARK
+        }
     }
 
     val speedSourceFlow: Flow<SpeedSource> = context.dataStore.data.map { preferences ->
@@ -61,11 +103,11 @@ class SettingsRepository(private val context: Context) {
     }
 
     val unitSystemFlow: Flow<UnitSystem> = context.dataStore.data.map { preferences ->
-        val name = preferences[KEY_UNIT_SYSTEM] ?: UnitSystem.METRIC.name
+        val name = preferences[KEY_UNIT_SYSTEM] ?: defaultUnitSystem.name
         try {
             UnitSystem.valueOf(name)
         } catch (e: Exception) {
-            UnitSystem.METRIC
+            defaultUnitSystem
         }
     }
 
@@ -149,6 +191,12 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
+    suspend fun setThemeMode(themeMode: ThemeMode) {
+        context.dataStore.edit { preferences ->
+            preferences[KEY_THEME_MODE] = themeMode.name
+        }
+    }
+
     suspend fun setUnitSystem(unitSystem: UnitSystem) {
         context.dataStore.edit { preferences ->
             preferences[KEY_UNIT_SYSTEM] = unitSystem.name
@@ -208,6 +256,31 @@ class SettingsRepository(private val context: Context) {
                         val name = parts[2]
                         val newEnabledStr = enabledTypes.joinToString(",") { it.name }
                         "$addr|$name|$newEnabledStr|$newEnabledStr"
+                    } else encoded
+                } else encoded
+            }.toSet()
+            preferences[KEY_PAIRED_BLE_DEVICES] = updated
+        }
+    }
+
+    suspend fun updateSensorCapabilities(address: String, detectedCapabilities: Set<SensorDataType>, enabledTypes: Set<SensorDataType>) {
+        context.dataStore.edit { preferences ->
+            val current = preferences[KEY_PAIRED_BLE_DEVICES] ?: emptySet()
+            val updated = current.map { encoded ->
+                if (encoded.contains(address)) {
+                    val parts = encoded.split("|")
+                    if (parts.size >= 4) {
+                        val addr = parts[0]
+                        val name = parts[1]
+                        val detectedStr = detectedCapabilities.joinToString(",") { it.name }
+                        val newEnabledStr = enabledTypes.joinToString(",") { it.name }
+                        "$addr|$name|$detectedStr|$newEnabledStr"
+                    } else if (parts.size == 3) {
+                        val addr = parts[1]
+                        val name = parts[2]
+                        val detectedStr = detectedCapabilities.joinToString(",") { it.name }
+                        val newEnabledStr = enabledTypes.joinToString(",") { it.name }
+                        "$addr|$name|$detectedStr|$newEnabledStr"
                     } else encoded
                 } else encoded
             }.toSet()

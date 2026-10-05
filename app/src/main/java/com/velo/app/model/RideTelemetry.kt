@@ -38,7 +38,7 @@ enum class MetricType(val title: String, val defaultUnitMetric: String, val defa
     HEART_RATE("Heart Rate", "bpm", "bpm"),
     POWER("Power", "W", "W"),
     DISTANCE("Distance", "km", "mi"),
-    ELAPSED_TIME("Time", "", ""),
+    ELAPSED_TIME("Elapsed Time", "", ""),
     AVG_SPEED("Avg Speed", "km/h", "mph"),
     MAX_SPEED("Max Speed", "km/h", "mph"),
     AVG_POWER("Avg Power", "W", "W"),

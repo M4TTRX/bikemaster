@@ -31,6 +31,8 @@ interface RideRepository {
     val rideStatus: StateFlow<RideStatus>
     val discoveredSensors: StateFlow<List<DiscoveredSensor>>
     val isScanning: StateFlow<Boolean>
+    val isWearOsCompanionInstalled: StateFlow<Boolean>
+    val isWearOsConnected: StateFlow<Boolean>
     fun startRide(useSimulator: Boolean)
     fun pauseRide()
     fun resumeRide(useSimulator: Boolean)
@@ -42,6 +44,7 @@ interface RideRepository {
     fun updateSensorEnabledTypes(address: String, types: Set<SensorDataType>)
     fun unpairSensor(address: String)
     fun disconnectSensor(address: String)
+    fun installWearOsCompanion()
 }
 
 class DefaultRideRepository(
@@ -56,6 +59,8 @@ class DefaultRideRepository(
 
     private val _rideStatus = MutableStateFlow(RideStatus.IDLE)
     override val rideStatus: StateFlow<RideStatus> = _rideStatus.asStateFlow()
+    override val isWearOsCompanionInstalled: StateFlow<Boolean> = wearOsManager.isCompanionInstalled
+    override val isWearOsConnected: StateFlow<Boolean> = wearOsManager.isConnected
 
     private val _speedSource = MutableStateFlow(SpeedSource.AUTO)
 
@@ -175,6 +180,17 @@ class DefaultRideRepository(
             }
         }
 
+        // Collect live BLE speed (for live speedometer display when idle or paused)
+        scope.launch {
+            bleSensorManager.speedFlow.collect { speedKmh ->
+                if (!_useSimulator.value && shouldUseSpeedSensor()) {
+                    if (_rideStatus.value != RideStatus.RECORDING) {
+                        _realTelemetry.update { it.copy(speedKmh = speedKmh) }
+                    }
+                }
+            }
+        }
+
         // Settings observation (speed source, wheel circumference, paired devices, simulator)
         if (settingsRepository != null) {
             scope.launch {
@@ -201,6 +217,12 @@ class DefaultRideRepository(
                     savedDevices.forEach { device ->
                         bleSensorManager.connectDevice(device.address, device.name, device.enabledDataTypes)
                     }
+                }
+            }
+
+            bleSensorManager.onCapabilitiesResolved = { address, detected, enabled ->
+                scope.launch {
+                    settingsRepository.updateSensorCapabilities(address, detected, enabled)
                 }
             }
         }
@@ -394,7 +416,13 @@ class DefaultRideRepository(
         val defaultEnabled = if (sensor.detectedCapabilities.isNotEmpty()) {
             sensor.detectedCapabilities
         } else {
-            setOf(SensorDataType.SPEED, SensorDataType.CADENCE)
+            // For unknown sensors, enable all standard types until GATT discovery confirms capabilities
+            setOf(
+                SensorDataType.SPEED,
+                SensorDataType.CADENCE,
+                SensorDataType.POWER,
+                SensorDataType.HEART_RATE
+            )
         }
 
         bleSensorManager.connectDevice(sensor.address, sensor.name, defaultEnabled)
@@ -434,5 +462,9 @@ class DefaultRideRepository(
 
     override fun disconnectSensor(address: String) {
         bleSensorManager.disconnectDevice(address)
+    }
+
+    override fun installWearOsCompanion() {
+        wearOsManager.installCompanionApp()
     }
 }

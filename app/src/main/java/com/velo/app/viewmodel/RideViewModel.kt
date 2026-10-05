@@ -13,6 +13,7 @@ import com.velo.app.model.RideStatus
 import com.velo.app.model.RideTelemetry
 import com.velo.app.model.SensorDataType
 import com.velo.app.model.SpeedSource
+import com.velo.app.model.ThemeMode
 import com.velo.app.model.UnitSystem
 import com.velo.app.sensors.DiscoveredSensor
 import com.velo.app.service.RideTrackingService
@@ -29,8 +30,11 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
 
     val isEmulator: Boolean = isRunningOnEmulator()
 
+    val themeMode: StateFlow<ThemeMode> = settingsRepository.themeModeFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), ThemeMode.DARK)
+
     val unitSystem: StateFlow<UnitSystem> = settingsRepository.unitSystemFlow
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), UnitSystem.METRIC)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), settingsRepository.defaultUnitSystem)
 
     val speedSource: StateFlow<SpeedSource> = settingsRepository.speedSourceFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), SpeedSource.AUTO)
@@ -57,6 +61,12 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
     val telemetry: StateFlow<RideTelemetry> = rideRepository.telemetry
     val discoveredSensors: StateFlow<List<DiscoveredSensor>> = rideRepository.discoveredSensors
     val isScanning: StateFlow<Boolean> = rideRepository.isScanning
+    val isWearOsCompanionInstalled: StateFlow<Boolean> = rideRepository.isWearOsCompanionInstalled
+    val isWearOsConnected: StateFlow<Boolean> = rideRepository.isWearOsConnected
+
+    fun onInstallWearOsCompanion() {
+        rideRepository.installWearOsCompanion()
+    }
 
     fun startSensorScan() {
         rideRepository.startSensorScan()
@@ -122,6 +132,12 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
     fun onResetClick() {
         rideRepository.resetRide()
         sendServiceAction(RideTrackingService.ACTION_STOP)
+    }
+
+    fun onThemeModeChange(themeMode: ThemeMode) {
+        viewModelScope.launch {
+            settingsRepository.setThemeMode(themeMode)
+        }
     }
 
     fun onUnitSystemChange(unitSystem: UnitSystem) {

@@ -7,6 +7,12 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import com.velo.app.model.SensorDataType
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import no.nordicsemi.android.ble.BleManager
 import no.nordicsemi.android.ble.observer.ConnectionObserver
 import java.util.UUID
@@ -29,6 +35,10 @@ class SingleSensorBleManager(
 ) : BleManager(context) {
 
     companion object {
+        const val SPEED_TIMEOUT_MS = 5000L
+        const val CADENCE_TIMEOUT_MS = 4500L
+        const val POWER_TIMEOUT_MS = 4500L
+
         val CSC_SERVICE_UUID: UUID = UUID.fromString("00001816-0000-1000-8000-00805f9b34fb")
         val CSC_MEASUREMENT_UUID: UUID = UUID.fromString("00002A5B-0000-1000-8000-00805f9b34fb")
 
@@ -52,10 +62,32 @@ class SingleSensorBleManager(
     private var lastWheelRevs: Long? = null
     private var lastWheelTime: Int? = null
 
+    private var capabilitiesResolved = false
+
+    var isManualDisconnect = false
+        private set
+    var currentDevice: BluetoothDevice? = null
+        private set
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private var reconnectJob: Job? = null
+
     private val timeoutHandler = Handler(Looper.getMainLooper())
-    private val cadenceTimeoutRunnable = Runnable { onCadenceUpdate(0) }
-    private val speedTimeoutRunnable = Runnable { onSpeedUpdate(0f, 0.0) }
-    private val powerTimeoutRunnable = Runnable { onPowerUpdate(0) }
+    private val cadenceTimeoutRunnable = Runnable {
+        lastCrankRevs = null
+        lastCrankTime = null
+        lastPowerCrankRevs = null
+        lastPowerCrankTime = null
+        onCadenceUpdate(0)
+    }
+    private val speedTimeoutRunnable = Runnable {
+        lastWheelRevs = null
+        lastWheelTime = null
+        onSpeedUpdate(0f, 0.0)
+    }
+    private val powerTimeoutRunnable = Runnable {
+        onPowerUpdate(0)
+    }
 
     init {
         setConnectionObserver(object : ConnectionObserver {
@@ -66,9 +98,12 @@ class SingleSensorBleManager(
             override fun onDeviceFailedToConnect(device: BluetoothDevice, reason: Int) {
                 clearTimeouts()
                 onConnectionStateChange(false)
+                scheduleReconnect(device)
             }
 
             override fun onDeviceReady(device: BluetoothDevice) {
+                reconnectJob?.cancel()
+                reconnectJob = null
                 onConnectionStateChange(true)
             }
 
@@ -76,9 +111,63 @@ class SingleSensorBleManager(
 
             override fun onDeviceDisconnected(device: BluetoothDevice, reason: Int) {
                 clearTimeouts()
+                capabilitiesResolved = false
+                lastWheelRevs = null
+                lastWheelTime = null
+                lastCrankRevs = null
+                lastCrankTime = null
+                lastPowerCrankRevs = null
+                lastPowerCrankTime = null
+                onCadenceUpdate(0)
+                onSpeedUpdate(0f, 0.0)
+                onPowerUpdate(0)
+                onHeartRateUpdate(0)
                 onConnectionStateChange(false)
+                scheduleReconnect(device)
             }
         })
+    }
+
+    fun startConnection(device: BluetoothDevice) {
+        currentDevice = device
+        isManualDisconnect = false
+        reconnectJob?.cancel()
+        reconnectJob = null
+        connect(device)
+            .useAutoConnect(false)
+            .retry(3, 500)
+            .enqueue()
+    }
+
+    private fun scheduleReconnect(device: BluetoothDevice) {
+        if (isManualDisconnect) return
+        reconnectJob?.cancel()
+        reconnectJob = scope.launch {
+            delay(2500L)
+            if (!isManualDisconnect && !isConnected) {
+                connect(device)
+                    .useAutoConnect(false)
+                    .retry(2, 500)
+                    .enqueue()
+            }
+        }
+    }
+
+    fun closeClient() {
+        isManualDisconnect = true
+        reconnectJob?.cancel()
+        reconnectJob = null
+        clearTimeouts()
+        try {
+            disconnect().enqueue()
+        } catch (e: Exception) {
+            // Ignore
+        }
+        try {
+            close()
+        } catch (e: Exception) {
+            // Ignore
+        }
     }
 
     private fun clearTimeouts() {
@@ -138,6 +227,17 @@ class SingleSensorBleManager(
                         val hasWheel = (flags and 0x01) != 0
                         val hasCrank = (flags and 0x02) != 0
 
+                        // Dynamic capability detection for Decathlon / Van Rysel (single mode: speed OR cadence)
+                        val detected = mutableSetOf<SensorDataType>()
+                        if (hasWheel) detected.add(SensorDataType.SPEED)
+                        if (hasCrank) detected.add(SensorDataType.CADENCE)
+                        if (detected.isNotEmpty() && (!capabilitiesResolved ||
+                                (hasWheel != enabledDataTypes.contains(SensorDataType.SPEED) &&
+                                 hasCrank != enabledDataTypes.contains(SensorDataType.CADENCE)))) {
+                            capabilitiesResolved = true
+                            onDetectedCapabilities(detected)
+                        }
+
                         var offset = 1
 
                         // Parse Wheel Revolution Data if present
@@ -165,10 +265,8 @@ class SingleSensorBleManager(
                                     if (speedKmh in 0.5f..150f && enabledDataTypes.contains(SensorDataType.SPEED)) {
                                         onSpeedUpdate(speedKmh, distMeters)
                                         timeoutHandler.removeCallbacks(speedTimeoutRunnable)
-                                        timeoutHandler.postDelayed(speedTimeoutRunnable, 2500L)
+                                        timeoutHandler.postDelayed(speedTimeoutRunnable, SPEED_TIMEOUT_MS)
                                     }
-                                } else if (dRevs == 0L && enabledDataTypes.contains(SensorDataType.SPEED)) {
-                                    onSpeedUpdate(0f, 0.0)
                                 }
                             }
                             lastWheelRevs = wheelRevs
@@ -194,10 +292,8 @@ class SingleSensorBleManager(
                                     if (enabledDataTypes.contains(SensorDataType.CADENCE)) {
                                         onCadenceUpdate(rpm.coerceIn(0, 220))
                                         timeoutHandler.removeCallbacks(cadenceTimeoutRunnable)
-                                        timeoutHandler.postDelayed(cadenceTimeoutRunnable, 2500L)
+                                        timeoutHandler.postDelayed(cadenceTimeoutRunnable, CADENCE_TIMEOUT_MS)
                                     }
-                                } else if (dRevs == 0 && enabledDataTypes.contains(SensorDataType.CADENCE)) {
-                                    onCadenceUpdate(0)
                                 }
                             }
                             lastCrankRevs = crankRevs
@@ -240,7 +336,7 @@ class SingleSensorBleManager(
                         if (enabledDataTypes.contains(SensorDataType.POWER)) {
                             onPowerUpdate(watts)
                             timeoutHandler.removeCallbacks(powerTimeoutRunnable)
-                            timeoutHandler.postDelayed(powerTimeoutRunnable, 2500L)
+                            timeoutHandler.postDelayed(powerTimeoutRunnable, POWER_TIMEOUT_MS)
                         }
 
                         // Check if Crank Revolution Data is included in Power packet (bit 5)
@@ -268,10 +364,8 @@ class SingleSensorBleManager(
                                         if (enabledDataTypes.contains(SensorDataType.CADENCE)) {
                                             onCadenceUpdate(rpm.coerceIn(0, 220))
                                             timeoutHandler.removeCallbacks(cadenceTimeoutRunnable)
-                                            timeoutHandler.postDelayed(cadenceTimeoutRunnable, 2500L)
+                                            timeoutHandler.postDelayed(cadenceTimeoutRunnable, CADENCE_TIMEOUT_MS)
                                         }
-                                    } else if (dRevs == 0 && enabledDataTypes.contains(SensorDataType.CADENCE)) {
-                                        onCadenceUpdate(0)
                                     }
                                 }
                                 lastPowerCrankRevs = crankRevs
@@ -294,6 +388,7 @@ class SingleSensorBleManager(
             lastPowerCrankTime = null
             lastWheelRevs = null
             lastWheelTime = null
+            capabilitiesResolved = false
             clearTimeouts()
             onCadenceUpdate(0)
             onSpeedUpdate(0f, 0.0)

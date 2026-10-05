@@ -1,5 +1,10 @@
 package com.velo.app.ui.dashboard
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -48,16 +53,21 @@ fun RideDashboardScreen(
     pairedDevices: List<PairedBleDevice> = emptyList(),
     onTileConfigured: (slotIndex: Int, metricType: MetricType, sourceId: String?) -> Unit = { _, _, _ -> }
 ) {
+    val effectiveCockpitTiles = remember(cockpitTiles) {
+        if (cockpitTiles.size >= 6) cockpitTiles else SettingsRepository.DEFAULT_TILES
+    }
+
     var customizingTileIndex by remember { mutableStateOf<Int?>(null) }
 
     customizingTileIndex?.let { slotIndex ->
-        val currentMetric = cockpitTiles.getOrElse(slotIndex) { MetricType.CADENCE }
+        val currentMetric = effectiveCockpitTiles.getOrElse(slotIndex) { MetricType.CADENCE }
         val currentSource = cockpitTileSources[slotIndex]
         TileCustomizationSheet(
             slotIndex = slotIndex,
             currentMetric = currentMetric,
             currentSourceId = currentSource,
             pairedDevices = pairedDevices,
+            allCockpitTiles = effectiveCockpitTiles,
             onSave = { metric, sourceId ->
                 onTileConfigured(slotIndex, metric, sourceId)
                 customizingTileIndex = null
@@ -92,12 +102,22 @@ fun RideDashboardScreen(
                 isBlePowerConnected = telemetry.isBlePowerConnected
             )
 
-            Spacer(modifier = Modifier.height(14.dp))
-
-            HeartRateZoneCapsules(
-                heartRateBpm = telemetry.heartRateBpm,
-                zone = telemetry.heartRateZone
-            )
+            AnimatedVisibility(
+                visible = telemetry.isHeartRateConnected,
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut()
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Spacer(modifier = Modifier.height(14.dp))
+                    HeartRateZoneCapsules(
+                        heartRateBpm = telemetry.heartRateBpm,
+                        zone = telemetry.heartRateZone
+                    )
+                }
+            }
         }
 
         // 2. CENTER SECTION: Adaptive Roboto Flex Speedometer
@@ -114,7 +134,7 @@ fun RideDashboardScreen(
             BottomMetricsGrid(
                 telemetry = telemetry,
                 unitSystem = unitSystem,
-                tiles = cockpitTiles,
+                tiles = effectiveCockpitTiles,
                 onTileLongClick = { slotIndex ->
                     customizingTileIndex = slotIndex
                 },

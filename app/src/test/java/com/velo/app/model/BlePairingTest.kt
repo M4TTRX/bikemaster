@@ -51,6 +51,7 @@ class BlePairingTest {
         assertTrue(metrics.contains(MetricType.AVG_POWER))
         assertTrue(metrics.contains(MetricType.MAX_POWER))
         assertTrue(metrics.contains(MetricType.ELEVATION))
+        assertEquals("Elapsed Time", MetricType.ELAPSED_TIME.title)
     }
 
     @Test
@@ -114,5 +115,72 @@ class BlePairingTest {
         )
         assertTrue(powerMeter.detectedCapabilities.contains(SensorDataType.POWER))
         assertTrue(powerMeter.enabledDataTypes.contains(SensorDataType.CADENCE))
+    }
+
+    @Test
+    fun testThemeModeOptions() {
+        val modes = ThemeMode.entries
+        assertEquals(3, modes.size)
+        assertTrue(modes.contains(ThemeMode.DARK))
+        assertTrue(modes.contains(ThemeMode.LIGHT))
+        assertTrue(modes.contains(ThemeMode.SYSTEM))
+        assertEquals("Dark", ThemeMode.DARK.title)
+        assertEquals("Light", ThemeMode.LIGHT.title)
+        assertEquals("System", ThemeMode.SYSTEM.title)
+    }
+
+    @Test
+    fun testDecathlonBikeBrandsAndUnknownSensors() {
+        val decathlonBrands = listOf("decathlon", "btwin", "b'twin", "van rysel", "triban", "elops", "rockrider", "geonaute")
+        val sampleNames = listOf(
+            "Van Rysel Power Meter",
+            "Triban CSC",
+            "Btwin Speed Sensor",
+            "Decathlon HR",
+            "Elops e-Bike Cadence"
+        )
+        for (name in sampleNames) {
+            val lower = name.lowercase()
+            assertTrue("Expected $name to match decathlon brands", decathlonBrands.any { lower.contains(it) })
+        }
+
+        // Unknown device pairing fallback
+        val unknownSensor = DiscoveredSensor(
+            name = "BK467",
+            address = "AA:BB:CC:DD:EE:FF",
+            rssi = -65,
+            detectedCapabilities = emptySet()
+        )
+        assertEquals("BK467", unknownSensor.name)
+        assertTrue(unknownSensor.detectedCapabilities.isEmpty())
+    }
+
+    @Test
+    fun testSingleSensorBleManagerTimeouts() {
+        assertEquals(5000L, com.velo.app.sensors.SingleSensorBleManager.SPEED_TIMEOUT_MS)
+        assertEquals(4500L, com.velo.app.sensors.SingleSensorBleManager.CADENCE_TIMEOUT_MS)
+        assertEquals(4500L, com.velo.app.sensors.SingleSensorBleManager.POWER_TIMEOUT_MS)
+    }
+
+    @Test
+    fun testVanRyselSingleModeSensorCapabilities() {
+        // In Decathlon Van Rysel sensors, green LED = Speed mode, red LED = Cadence mode
+        val vanRyselSpeed = PairedBleDevice(
+            address = "D4:36:39:84:B2:C1",
+            name = "Van Rysel SPD",
+            detectedCapabilities = setOf(SensorDataType.SPEED),
+            enabledDataTypes = setOf(SensorDataType.SPEED)
+        )
+        assertTrue(vanRyselSpeed.detectedCapabilities.contains(SensorDataType.SPEED))
+        assertFalse(vanRyselSpeed.detectedCapabilities.contains(SensorDataType.CADENCE))
+
+        val vanRyselCadence = PairedBleDevice(
+            address = "D4:36:39:84:B2:C2",
+            name = "Van Rysel CAD",
+            detectedCapabilities = setOf(SensorDataType.CADENCE),
+            enabledDataTypes = setOf(SensorDataType.CADENCE)
+        )
+        assertFalse(vanRyselCadence.detectedCapabilities.contains(SensorDataType.SPEED))
+        assertTrue(vanRyselCadence.detectedCapabilities.contains(SensorDataType.CADENCE))
     }
 }

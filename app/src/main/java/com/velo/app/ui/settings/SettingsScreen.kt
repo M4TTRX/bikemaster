@@ -27,12 +27,14 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.DirectionsBike
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Sensors
 import androidx.compose.material.icons.filled.Straighten
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Watch
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -49,25 +51,37 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.velo.app.data.PairedBleDevice
 import com.velo.app.model.SensorDataType
 import com.velo.app.model.SpeedSource
+import com.velo.app.model.ThemeMode
 import com.velo.app.model.UnitSystem
 import com.velo.app.sensors.DiscoveredSensor
+import com.velo.app.ui.components.SingleSelectButtonGroup
 import com.velo.app.ui.theme.getRobotoFlexFont
+import com.velo.app.ui.util.performAppClickHaptic
+
+data class WheelSizePreset(
+    val name: String,
+    val dimensions: String,
+    val circumferenceMm: Int
+)
 
 val WHEEL_SIZE_PRESETS = listOf(
-    Pair("700 x 25c (Standard Road)", 2105),
-    Pair("700 x 28c (Endurance Road)", 2136),
-    Pair("700 x 32c (Gravel / All-Road)", 2155),
-    Pair("700 x 23c (Race)", 2096),
-    Pair("29\" x 2.2\" (MTB)", 2298)
+    WheelSizePreset("Standard Road", "700 x 25c", 2105),
+    WheelSizePreset("Endurance Road", "700 x 28c", 2136),
+    WheelSizePreset("Gravel / All-Road", "700 x 32c", 2155),
+    WheelSizePreset("Race", "700 x 23c", 2096),
+    WheelSizePreset("MTB", "29\" x 2.2\"", 2298)
 )
 
 @Composable
 fun SettingsScreen(
+    themeMode: ThemeMode = ThemeMode.DARK,
+    onThemeModeChange: (ThemeMode) -> Unit = {},
     unitSystem: UnitSystem,
     onUnitSystemChange: (UnitSystem) -> Unit,
     speedSource: SpeedSource,
@@ -83,6 +97,9 @@ fun SettingsScreen(
     onKeepScreenOnChange: (Boolean) -> Unit,
     discoveredSensors: List<DiscoveredSensor>,
     isScanning: Boolean,
+    isWearOsCompanionInstalled: Boolean = false,
+    isWearOsConnected: Boolean = false,
+    onInstallWearOsCompanion: () -> Unit = {},
     onStartScan: () -> Unit,
     onPairSensor: (DiscoveredSensor) -> Unit,
     isCadenceConnected: Boolean,
@@ -93,6 +110,7 @@ fun SettingsScreen(
     onBackClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val view = LocalView.current
     val scrollState = rememberScrollState()
     var isPairingDialogOpen by remember { mutableStateOf(false) }
 
@@ -125,13 +143,17 @@ fun SettingsScreen(
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(
-                onClick = onBackClick,
-                modifier = Modifier.size(40.dp)
+                onClick = {
+                    view.performAppClickHaptic()
+                    onBackClick()
+                },
+                modifier = Modifier.size(44.dp)
             ) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = "Back to Ride Dashboard",
-                    tint = MaterialTheme.colorScheme.onBackground
+                    tint = MaterialTheme.colorScheme.onBackground,
+                    modifier = Modifier.size(24.dp)
                 )
             }
 
@@ -140,49 +162,88 @@ fun SettingsScreen(
             Text(
                 text = "Settings",
                 color = MaterialTheme.colorScheme.onBackground,
-                fontSize = 26.sp,
+                fontSize = 28.sp,
                 fontFamily = getRobotoFlexFont(width = 90f, weight = 700)
             )
         }
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // SECTION 1: SPEED & TRACKING SOURCE
-        SettingsSectionHeader(title = "Speed Tracking Source")
+        // SECTION 1: MEASUREMENTS (Combines distance, units, speed source, and wheel size)
+        SettingsSectionHeader(title = "Measurements")
         SettingsCard {
-            SettingsSelectRow(
-                title = "Auto (Speed Sensor Priority)",
-                subtitle = "Uses wheel speed sensor if connected, falls back to GPS",
-                isSelected = speedSource == SpeedSource.AUTO,
-                onClick = { onSpeedSourceChange(SpeedSource.AUTO) }
-            )
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 1.dp)
-            SettingsSelectRow(
-                title = "Speed Sensor Only",
-                subtitle = "Tracks speed & distance strictly from wheel sensor revolutions",
-                isSelected = speedSource == SpeedSource.SPEED_SENSOR,
-                onClick = { onSpeedSourceChange(SpeedSource.SPEED_SENSOR) }
-            )
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 1.dp)
-            SettingsSelectRow(
-                title = "GPS Only",
-                subtitle = "Tracks speed & distance strictly from phone GPS",
-                isSelected = speedSource == SpeedSource.GPS,
-                onClick = { onSpeedSourceChange(SpeedSource.GPS) }
-            )
-        }
+            // 1A. Units for measurements (2 options -> Button group)
+            val unitsSubtitle = when (unitSystem) {
+                UnitSystem.METRIC -> "Metric (km, km/h, meters)"
+                UnitSystem.IMPERIAL -> "Imperial (mi, mph, feet)"
+            }
+            SettingsButtonGroupRow(
+                title = "Units of Measurement",
+                subtitle = unitsSubtitle
+            ) {
+                SingleSelectButtonGroup(
+                    options = listOf(UnitSystem.METRIC, UnitSystem.IMPERIAL),
+                    selectedOption = unitSystem,
+                    onOptionSelected = onUnitSystemChange,
+                    labelProvider = { if (it == UnitSystem.METRIC) "Metric" else "Imperial" }
+                )
+            }
 
-        Spacer(modifier = Modifier.height(24.dp))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 1.dp)
 
-        // SECTION 2: WHEEL CALIBRATION (If using speed sensor)
-        SettingsSectionHeader(title = "Wheel Calibration (${wheelCircumferenceMm} mm)")
-        SettingsCard {
+            // 1B. Speed Tracking Source (3 options -> Button group)
+            val speedSubtitle = when (speedSource) {
+                SpeedSource.AUTO -> "Speed sensor if connected, GPS fallback"
+                SpeedSource.SPEED_SENSOR -> "Wheel sensor revolutions only"
+                SpeedSource.GPS -> "Phone GPS only"
+            }
+            SettingsButtonGroupRow(
+                title = "Speed Tracking Source",
+                subtitle = speedSubtitle
+            ) {
+                SingleSelectButtonGroup(
+                    options = listOf(SpeedSource.AUTO, SpeedSource.SPEED_SENSOR, SpeedSource.GPS),
+                    selectedOption = speedSource,
+                    onOptionSelected = onSpeedSourceChange,
+                    labelProvider = {
+                        when (it) {
+                            SpeedSource.AUTO -> "Auto"
+                            SpeedSource.SPEED_SENSOR -> "Sensor"
+                            SpeedSource.GPS -> "GPS"
+                        }
+                    }
+                )
+            }
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 1.dp)
+
+            // 1C. Wheel Size Selection (Do not specify mm circumference)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 4.dp)
+            ) {
+                Text(
+                    text = "Wheel Size",
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontSize = 18.sp,
+                    fontFamily = getRobotoFlexFont(width = 90f, weight = 600)
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = "Select your bike's wheel and tire size",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 14.sp,
+                    fontFamily = getRobotoFlexFont(width = 90f, weight = 400)
+                )
+            }
+
             WHEEL_SIZE_PRESETS.forEachIndexed { index, preset ->
                 SettingsSelectRow(
-                    title = preset.first,
-                    subtitle = "${preset.second} mm circumference",
-                    isSelected = wheelCircumferenceMm == preset.second,
-                    onClick = { onWheelCircumferenceChange(preset.second) }
+                    title = preset.name,
+                    subtitle = preset.dimensions,
+                    isSelected = wheelCircumferenceMm == preset.circumferenceMm,
+                    onClick = { onWheelCircumferenceChange(preset.circumferenceMm) }
                 )
                 if (index < WHEEL_SIZE_PRESETS.lastIndex) {
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 1.dp)
@@ -192,81 +253,150 @@ fun SettingsScreen(
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        // SECTION 3: CONNECTED SENSORS & PAIRING
-        SettingsSectionHeader(title = "Sensors & Connections")
+        // SECTION 2: DEVICES
+        SettingsSectionHeader(title = "Devices")
         SettingsCard {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable {
-                        onStartScan()
-                        isPairingDialogOpen = true
+            // 2A. Wear OS Companion
+            if (isWearOsCompanionInstalled) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Watch,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(24.dp)
+                        )
                     }
-                    .padding(horizontal = 16.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(
+
+                    Spacer(modifier = Modifier.width(14.dp))
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Wear OS Companion",
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontSize = 18.sp,
+                            fontFamily = getRobotoFlexFont(width = 90f, weight = 600)
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = if (isWearOsConnected) "Connected • Optical HR Ready" else "Installed • Optical HR Ready",
+                            color = MaterialTheme.colorScheme.primary,
+                            fontSize = 14.sp,
+                            fontFamily = getRobotoFlexFont(width = 90f, weight = 400)
+                        )
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.secondaryContainer)
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            text = "Installed",
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            fontSize = 12.sp,
+                            fontFamily = getRobotoFlexFont(width = 95f, weight = 700)
+                        )
+                    }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 1.dp)
+            } else {
+                Column(
                     modifier = Modifier
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primaryContainer),
-                    contentAlignment = Alignment.Center
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 16.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Sensors,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                        modifier = Modifier.size(22.dp)
-                    )
-                }
-
-                Spacer(modifier = Modifier.width(14.dp))
-
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Pair a Sensor",
-                        color = MaterialTheme.colorScheme.onSurface,
-                        fontSize = 15.sp,
-                        fontFamily = getRobotoFlexFont(width = 90f, weight = 600)
-                    )
-                    Text(
-                        text = "Connect Speed, Cadence, Power, or HR monitor",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 12.sp,
-                        fontFamily = getRobotoFlexFont(width = 90f, weight = 400)
-                    )
-                }
-
-                Box(
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primaryContainer)
-                        .clickable {
-                            onStartScan()
-                            isPairingDialogOpen = true
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Watch,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(24.dp)
+                            )
                         }
-                        .padding(horizontal = 14.dp, vertical = 7.dp)
-                ) {
-                    Text(
-                        text = "Scan",
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                        fontSize = 12.sp,
-                        fontFamily = getRobotoFlexFont(width = 95f, weight = 700)
-                    )
-                }
-            }
-        }
 
-        // SECTION 3B: PAIRED SENSORS LIST WITH DATA TYPE EDITING & FORGET
-        if (pairedBleDevices.isNotEmpty()) {
-            Spacer(modifier = Modifier.height(24.dp))
-            SettingsSectionHeader(title = "Paired Devices (${pairedBleDevices.size})")
-            SettingsCard {
+                        Spacer(modifier = Modifier.width(14.dp))
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Wear OS Companion",
+                                color = MaterialTheme.colorScheme.onSurface,
+                                fontSize = 18.sp,
+                                fontFamily = getRobotoFlexFont(width = 90f, weight = 600)
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "Stream optical heart rate from your smartwatch",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 14.sp,
+                                fontFamily = getRobotoFlexFont(width = 90f, weight = 400)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(44.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                            .clickable {
+                                view.performAppClickHaptic()
+                                onInstallWearOsCompanion()
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Watch,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Install Wear OS Companion",
+                                color = MaterialTheme.colorScheme.primary,
+                                fontSize = 14.sp,
+                                fontFamily = getRobotoFlexFont(width = 95f, weight = 700)
+                            )
+                        }
+                    }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 1.dp)
+            }
+
+            // 2B. Paired BLE Devices List
+            if (pairedBleDevices.isNotEmpty()) {
                 pairedBleDevices.forEachIndexed { index, device ->
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 14.dp)
+                            .padding(horizontal = 16.dp, vertical = 16.dp)
                     ) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -282,7 +412,7 @@ fun SettingsScreen(
 
                             Box(
                                 modifier = Modifier
-                                    .size(38.dp)
+                                    .size(44.dp)
                                     .clip(CircleShape)
                                     .background(MaterialTheme.colorScheme.surfaceContainerHigh),
                                 contentAlignment = Alignment.Center
@@ -291,23 +421,24 @@ fun SettingsScreen(
                                     imageVector = icon,
                                     contentDescription = null,
                                     tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(20.dp)
+                                    modifier = Modifier.size(22.dp)
                                 )
                             }
 
-                            Spacer(modifier = Modifier.width(12.dp))
+                            Spacer(modifier = Modifier.width(14.dp))
 
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
                                     text = device.name,
                                     color = MaterialTheme.colorScheme.onSurface,
-                                    fontSize = 14.sp,
+                                    fontSize = 18.sp,
                                     fontFamily = getRobotoFlexFont(width = 90f, weight = 600)
                                 )
+                                Spacer(modifier = Modifier.height(2.dp))
                                 Text(
                                     text = device.address,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    fontSize = 11.sp,
+                                    fontSize = 14.sp,
                                     fontFamily = getRobotoFlexFont(width = 90f, weight = 400)
                                 )
                             }
@@ -316,29 +447,31 @@ fun SettingsScreen(
                                 modifier = Modifier
                                     .clip(CircleShape)
                                     .background(MaterialTheme.colorScheme.errorContainer)
-                                    .clickable { onUnpairSensor(device.address) }
-                                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                                    .clickable {
+                                        view.performAppClickHaptic()
+                                        onUnpairSensor(device.address)
+                                    }
+                                    .padding(horizontal = 14.dp, vertical = 7.dp)
                             ) {
                                 Text(
                                     text = "Forget",
                                     color = MaterialTheme.colorScheme.onErrorContainer,
-                                    fontSize = 11.sp,
+                                    fontSize = 12.sp,
                                     fontFamily = getRobotoFlexFont(width = 95f, weight = 700)
                                 )
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(10.dp))
+                        Spacer(modifier = Modifier.height(12.dp))
 
-                        // Data type chips to configure what data this sensor provides
                         Text(
                             text = "Provided Data Types:",
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 11.sp,
+                            fontSize = 13.sp,
                             fontFamily = getRobotoFlexFont(width = 90f, weight = 500)
                         )
 
-                        Spacer(modifier = Modifier.height(6.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
 
                         val availableTypes = remember(device.detectedCapabilities) {
                             if (device.detectedCapabilities.isNotEmpty()) {
@@ -385,6 +518,7 @@ fun SettingsScreen(
                                             interactionSource = interactionSource,
                                             indication = null
                                         ) {
+                                            view.performAppClickHaptic()
                                             val updated = if (isEnabled) {
                                                 device.enabledDataTypes - dataType
                                             } else {
@@ -392,23 +526,14 @@ fun SettingsScreen(
                                             }
                                             onUpdateSensorTypes(device.address, updated)
                                         }
-                                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                                        .padding(horizontal = 12.dp, vertical = 7.dp),
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
-                                        if (isEnabled) {
-                                            Icon(
-                                                imageVector = Icons.Default.Check,
-                                                contentDescription = null,
-                                                tint = chipText,
-                                                modifier = Modifier.size(12.dp)
-                                            )
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                        }
                                         Text(
                                             text = dataType.title,
                                             color = chipText,
-                                            fontSize = 11.sp,
+                                            fontSize = 13.sp,
                                             fontFamily = getRobotoFlexFont(width = 90f, weight = if (isEnabled) 700 else 400)
                                         )
                                     }
@@ -416,38 +541,72 @@ fun SettingsScreen(
                             }
                         }
                     }
-                    if (index < pairedBleDevices.lastIndex) {
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 1.dp)
-                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 1.dp)
+                }
+            }
+
+            // 2C. Bottom full-width Add Sensor button (Same primary color as selected button group item)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+                    .height(48.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primary)
+                    .clickable {
+                        view.performAppClickHaptic()
+                        onStartScan()
+                        isPairingDialogOpen = true
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onPrimary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Add Sensor",
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        fontSize = 15.sp,
+                        fontFamily = getRobotoFlexFont(width = 95f, weight = 700)
+                    )
                 }
             }
         }
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        // SECTION 4: UNITS OF TRAVEL
-        SettingsSectionHeader(title = "Units of Travel")
-        SettingsCard {
-            SettingsSelectRow(
-                title = "Metric (km, km/h, meters)",
-                subtitle = "Kilometers, km/h, and meters for elevation",
-                isSelected = unitSystem == UnitSystem.METRIC,
-                onClick = { onUnitSystemChange(UnitSystem.METRIC) }
-            )
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 1.dp)
-            SettingsSelectRow(
-                title = "Imperial (mi, mph, feet)",
-                subtitle = "Miles, mph, and feet for elevation",
-                isSelected = unitSystem == UnitSystem.IMPERIAL,
-                onClick = { onUnitSystemChange(UnitSystem.IMPERIAL) }
-            )
-        }
-
-        Spacer(modifier = Modifier.height(24.dp))
-
-        // SECTION 5: DISPLAY & BATTERY OPTIMIZATION
+        // SECTION 3: DISPLAY & BATTERY (Theme mode selection + Keep Screen On)
         SettingsSectionHeader(title = "Display & Battery")
         SettingsCard {
+            // Theme selection (3 options -> Button group)
+            val themeSubtitle = when (themeMode) {
+                ThemeMode.DARK -> "App uses dark theme"
+                ThemeMode.LIGHT -> "App uses light theme"
+                ThemeMode.SYSTEM -> "Follows device system theme"
+            }
+            SettingsButtonGroupRow(
+                title = "Theme",
+                subtitle = themeSubtitle
+            ) {
+                SingleSelectButtonGroup(
+                    options = listOf(ThemeMode.DARK, ThemeMode.LIGHT, ThemeMode.SYSTEM),
+                    selectedOption = themeMode,
+                    onOptionSelected = onThemeModeChange,
+                    labelProvider = { it.title }
+                )
+            }
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 1.dp)
+
             SettingsSwitchRow(
                 icon = Icons.Default.Tune,
                 title = "Keep Screen On",
@@ -457,7 +616,7 @@ fun SettingsScreen(
             )
         }
 
-        // SECTION 6: TESTING & SIMULATOR (Only visible on Android Emulator)
+        // SECTION 4: TESTING & SIMULATOR (Only visible on Android Emulator)
         if (isEmulator) {
             Spacer(modifier = Modifier.height(24.dp))
             SettingsSectionHeader(title = "Developer & Emulator")
@@ -481,8 +640,8 @@ private fun SettingsSectionHeader(title: String) {
     Text(
         text = title,
         color = MaterialTheme.colorScheme.primary,
-        fontSize = 13.sp,
-        fontFamily = getRobotoFlexFont(width = 100f, weight = 600),
+        fontSize = 14.sp,
+        fontFamily = getRobotoFlexFont(width = 100f, weight = 700),
         modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)
     )
 }
@@ -502,17 +661,52 @@ private fun SettingsCard(
 }
 
 @Composable
+private fun SettingsButtonGroupRow(
+    title: String,
+    subtitle: String? = null,
+    content: @Composable () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 16.dp)
+    ) {
+        Text(
+            text = title,
+            color = MaterialTheme.colorScheme.onSurface,
+            fontSize = 18.sp,
+            fontFamily = getRobotoFlexFont(width = 90f, weight = 600)
+        )
+        if (subtitle != null) {
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = subtitle,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 14.sp,
+                fontFamily = getRobotoFlexFont(width = 90f, weight = 400)
+            )
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+        content()
+    }
+}
+
+@Composable
 private fun SettingsSelectRow(
     title: String,
     subtitle: String? = null,
     isSelected: Boolean,
     onClick: () -> Unit
 ) {
+    val view = LocalView.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 14.dp),
+            .clickable(onClick = {
+                view.performAppClickHaptic()
+                onClick()
+            })
+            .padding(horizontal = 16.dp, vertical = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
@@ -520,14 +714,15 @@ private fun SettingsSelectRow(
             Text(
                 text = title,
                 color = MaterialTheme.colorScheme.onSurface,
-                fontSize = 15.sp,
+                fontSize = 18.sp,
                 fontFamily = getRobotoFlexFont(width = 90f, weight = 500)
             )
             if (subtitle != null) {
+                Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = subtitle,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontSize = 12.sp,
+                    fontSize = 14.sp,
                     fontFamily = getRobotoFlexFont(width = 90f, weight = 400)
                 )
             }
@@ -536,7 +731,7 @@ private fun SettingsSelectRow(
         if (isSelected) {
             Box(
                 modifier = Modifier
-                    .size(24.dp)
+                    .size(28.dp)
                     .clip(CircleShape)
                     .background(MaterialTheme.colorScheme.primaryContainer),
                 contentAlignment = Alignment.Center
@@ -545,7 +740,7 @@ private fun SettingsSelectRow(
                     imageVector = Icons.Default.Check,
                     contentDescription = "Selected",
                     tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                    modifier = Modifier.size(16.dp)
+                    modifier = Modifier.size(18.dp)
                 )
             }
         }
@@ -560,15 +755,16 @@ private fun SettingsSwitchRow(
     isChecked: Boolean,
     onCheckedChange: (Boolean) -> Unit
 ) {
+    val view = LocalView.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 14.dp),
+            .padding(horizontal = 16.dp, vertical = 16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
             modifier = Modifier
-                .size(38.dp)
+                .size(44.dp)
                 .clip(CircleShape)
                 .background(MaterialTheme.colorScheme.surfaceContainerHigh),
             contentAlignment = Alignment.Center
@@ -577,7 +773,7 @@ private fun SettingsSwitchRow(
                 imageVector = icon,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(20.dp)
+                modifier = Modifier.size(24.dp)
             )
         }
 
@@ -587,20 +783,24 @@ private fun SettingsSwitchRow(
             Text(
                 text = title,
                 color = MaterialTheme.colorScheme.onSurface,
-                fontSize = 15.sp,
+                fontSize = 18.sp,
                 fontFamily = getRobotoFlexFont(width = 90f, weight = 600)
             )
+            Spacer(modifier = Modifier.height(2.dp))
             Text(
                 text = subtitle,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                fontSize = 12.sp,
+                fontSize = 14.sp,
                 fontFamily = getRobotoFlexFont(width = 90f, weight = 400)
             )
         }
 
         Switch(
             checked = isChecked,
-            onCheckedChange = onCheckedChange
+            onCheckedChange = {
+                view.performAppClickHaptic()
+                onCheckedChange(it)
+            }
         )
     }
 }

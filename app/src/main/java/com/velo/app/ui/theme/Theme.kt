@@ -8,6 +8,7 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.ExperimentalTextApi
 import androidx.compose.ui.text.font.Font
@@ -28,7 +29,7 @@ val DarkColorScheme = darkColorScheme(
     onTertiary = DarkOnTertiary,
     tertiaryContainer = DarkTertiaryContainer,
     onTertiaryContainer = DarkOnTertiaryContainer,
-    background = DarkBackground,
+    background = Color(0xFF000000),
     onBackground = DarkOnBackground,
     surface = DarkSurface,
     onSurface = DarkOnSurface,
@@ -102,16 +103,26 @@ fun getRobotoFlexFont(width: Float = 100f, weight: Int = 400): FontFamily {
 
 @Composable
 fun VeloTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
+    darkTheme: Boolean = true,
     dynamicColor: Boolean = true,
     content: @Composable () -> Unit
 ) {
     val colorScheme = when {
         dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
             val context = LocalContext.current
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+            if (darkTheme) {
+                // When in dark mode, exceptionally use pure pitch black (#000000) for OLED power saving
+                // and sunlight readability instead of dynamic Material You charcoal/grey background.
+                dynamicDarkColorScheme(context).copy(
+                    background = Color(0xFF000000)
+                )
+            } else {
+                dynamicLightColorScheme(context)
+            }
         }
-        darkTheme -> DarkColorScheme
+        darkTheme -> DarkColorScheme.copy(
+            background = Color(0xFF000000)
+        )
         else -> LightColorScheme
     }
 

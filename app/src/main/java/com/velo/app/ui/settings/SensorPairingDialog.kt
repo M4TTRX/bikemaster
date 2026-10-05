@@ -41,12 +41,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.velo.app.model.SensorDataType
 import com.velo.app.sensors.DiscoveredSensor
 import com.velo.app.ui.theme.getRobotoFlexFont
+import com.velo.app.ui.util.performAppClickHaptic
 
 @Composable
 fun SensorPairingDialog(
@@ -55,6 +57,8 @@ fun SensorPairingDialog(
     onSensorSelected: (DiscoveredSensor) -> Unit,
     onDismiss: () -> Unit
 ) {
+    val view = LocalView.current
+
     Dialog(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
@@ -85,7 +89,10 @@ fun SensorPairingDialog(
                 }
 
                 IconButton(
-                    onClick = onDismiss,
+                    onClick = {
+                        view.performAppClickHaptic()
+                        onDismiss()
+                    },
                     modifier = Modifier.size(32.dp)
                 ) {
                     Icon(
@@ -159,7 +166,10 @@ fun SensorPairingDialog(
                                 .clickable(
                                     interactionSource = interactionSource,
                                     indication = null
-                                ) { onSensorSelected(sensor) }
+                                ) {
+                                    view.performAppClickHaptic()
+                                    onSensorSelected(sensor)
+                                }
                                 .padding(vertical = 10.dp, horizontal = 4.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {

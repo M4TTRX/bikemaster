@@ -9,9 +9,11 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.velo.app.model.ThemeMode
 import com.velo.app.ui.MainScreen
 import com.velo.app.ui.theme.VeloTheme
 import com.velo.app.viewmodel.RideViewModel
@@ -45,7 +47,14 @@ class MainActivity : ComponentActivity() {
         permissionLauncher.launch(permissionsToRequest.toTypedArray())
 
         setContent {
-            VeloTheme {
+            val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
+            val isDarkTheme = when (themeMode) {
+                ThemeMode.DARK -> true
+                ThemeMode.LIGHT -> false
+                ThemeMode.SYSTEM -> isSystemInDarkTheme()
+            }
+
+            VeloTheme(darkTheme = isDarkTheme) {
                 val telemetry by viewModel.telemetry.collectAsStateWithLifecycle()
                 val unitSystem by viewModel.unitSystem.collectAsStateWithLifecycle()
                 val rideStatus by viewModel.rideStatus.collectAsStateWithLifecycle()
@@ -58,6 +67,8 @@ class MainActivity : ComponentActivity() {
                 val isKeepScreenOn by viewModel.isKeepScreenOn.collectAsStateWithLifecycle()
                 val discoveredSensors by viewModel.discoveredSensors.collectAsStateWithLifecycle()
                 val isScanning by viewModel.isScanning.collectAsStateWithLifecycle()
+                val isWearOsCompanionInstalled by viewModel.isWearOsCompanionInstalled.collectAsStateWithLifecycle()
+                val isWearOsConnected by viewModel.isWearOsConnected.collectAsStateWithLifecycle()
 
                 DisposableEffect(isKeepScreenOn) {
                     if (isKeepScreenOn) {
@@ -72,6 +83,8 @@ class MainActivity : ComponentActivity() {
 
                 MainScreen(
                     telemetry = telemetry,
+                    themeMode = themeMode,
+                    onThemeModeChange = { viewModel.onThemeModeChange(it) },
                     unitSystem = unitSystem,
                     speedSource = speedSource,
                     wheelCircumferenceMm = wheelCircumferenceMm,
@@ -84,6 +97,9 @@ class MainActivity : ComponentActivity() {
                     isEmulator = viewModel.isEmulator,
                     discoveredSensors = discoveredSensors,
                     isScanning = isScanning,
+                    isWearOsCompanionInstalled = isWearOsCompanionInstalled,
+                    isWearOsConnected = isWearOsConnected,
+                    onInstallWearOsCompanion = { viewModel.onInstallWearOsCompanion() },
                     onStartScan = { viewModel.startSensorScan() },
                     onPairSensor = { viewModel.pairSensor(it) },
                     onUnpairSensor = { viewModel.unpairSensor(it) },

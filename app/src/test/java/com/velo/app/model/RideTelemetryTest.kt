@@ -55,7 +55,25 @@ class RideTelemetryTest {
         assertEquals(0L, telemetry.elapsedTimeSeconds)
         assertEquals(0, telemetry.cadenceRpm)
         assertEquals(0.0f, telemetry.avgSpeedKmh, 0.001f)
-        assertEquals(0.0f, telemetry.elevationGainMeters, 0.001f)
+        assertEquals(false, telemetry.isGpsActive)
+        assertEquals(false, telemetry.isHeartRateConnected)
         assertEquals(SpeedSource.AUTO, telemetry.speedSource)
+    }
+
+    @Test
+    fun testGpsAndWatchConnectionStates() {
+        val connectedTelemetry = RideTelemetry(
+            isGpsActive = true,
+            isHeartRateConnected = true,
+            heartRateBpm = 145
+        )
+        assertEquals(true, connectedTelemetry.isGpsActive)
+        assertEquals(true, connectedTelemetry.isHeartRateConnected)
+        assertEquals(HeartRateZone.CARDIO, connectedTelemetry.heartRateZone)
+
+        val disconnectedWatchTelemetry = connectedTelemetry.copy(
+            isHeartRateConnected = false
+        )
+        assertEquals(false, disconnectedWatchTelemetry.isHeartRateConnected)
     }
 }

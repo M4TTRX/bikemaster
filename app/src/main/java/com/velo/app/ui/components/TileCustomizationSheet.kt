@@ -1,15 +1,10 @@
 package com.velo.app.ui.components
 
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -33,6 +28,7 @@ import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Route
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Terrain
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -50,13 +46,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.velo.app.data.PairedBleDevice
 import com.velo.app.model.MetricType
 import com.velo.app.model.SensorDataType
 import com.velo.app.ui.theme.getRobotoFlexFont
+import com.velo.app.ui.util.performAppClickHaptic
 
 data class CompatibleSource(
     val id: String,
@@ -65,13 +64,14 @@ data class CompatibleSource(
     val icon: ImageVector
 )
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TileCustomizationSheet(
     slotIndex: Int,
     currentMetric: MetricType,
     currentSourceId: String?,
     pairedDevices: List<PairedBleDevice>,
+    allCockpitTiles: List<MetricType> = emptyList(),
     onSave: (MetricType, String?) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -82,6 +82,8 @@ fun TileCustomizationSheet(
     val compatibleSources = remember(selectedMetric, pairedDevices) {
         getCompatibleSources(selectedMetric, pairedDevices)
     }
+
+    val view = LocalView.current
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -128,7 +130,10 @@ fun TileCustomizationSheet(
                 }
 
                 IconButton(
-                    onClick = onDismiss,
+                    onClick = {
+                        view.performAppClickHaptic()
+                        onDismiss()
+                    },
                     modifier = Modifier.size(36.dp)
                 ) {
                     Icon(
@@ -153,96 +158,87 @@ fun TileCustomizationSheet(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            FlowRow(
+            val metricRows = remember {
+                listOf(
+                    listOf(MetricType.POWER, MetricType.AVG_POWER, MetricType.MAX_POWER),
+                    listOf(MetricType.AVG_SPEED, MetricType.MAX_SPEED),
+                    listOf(MetricType.CADENCE, MetricType.HEART_RATE),
+                    listOf(MetricType.DISTANCE, MetricType.ELAPSED_TIME, MetricType.ELEVATION)
+                )
+            }
+
+            Column(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                MetricType.values().forEach { metric ->
-                    val isSelected = metric == selectedMetric
-                    val scale by animateFloatAsState(
-                        targetValue = if (isSelected) 1.02f else 1.0f,
-                        animationSpec = spring(
-                            dampingRatio = Spring.DampingRatioMediumBouncy,
-                            stiffness = Spring.StiffnessMediumLow
-                        ),
-                        label = "scale"
-                    )
-
-                    val chipBg = if (isSelected) {
-                        MaterialTheme.colorScheme.secondaryContainer
-                    } else {
-                        MaterialTheme.colorScheme.surfaceContainerHigh
-                    }
-                    val contentColor = if (isSelected) {
-                        MaterialTheme.colorScheme.onSecondaryContainer
-                    } else {
-                        MaterialTheme.colorScheme.onSurface
-                    }
-
-                    Box(
-                        modifier = Modifier
-                            .scale(scale)
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(chipBg)
-                            .clickable {
-                                selectedMetric = metric
-                                // Reset source if current source is incompatible with new metric
-                                val newCompat = getCompatibleSources(metric, pairedDevices)
-                                if (newCompat.none { it.id == selectedSourceId }) {
-                                    selectedSourceId = newCompat.firstOrNull()?.id ?: "AUTO"
-                                }
+                metricRows.forEach { rowMetrics ->
+                    SingleSelectButtonGroup(
+                        options = rowMetrics,
+                        selectedOption = selectedMetric,
+                        onOptionSelected = { metric ->
+                            selectedMetric = metric
+                            // Reset source if current source is incompatible with new metric
+                            val newCompat = getCompatibleSources(metric, pairedDevices)
+                            if (newCompat.none { it.id == selectedSourceId }) {
+                                selectedSourceId = newCompat.firstOrNull()?.id ?: "AUTO"
                             }
-                            .padding(horizontal = 14.dp, vertical = 10.dp)
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = getMetricIcon(metric),
-                                contentDescription = null,
-                                tint = contentColor,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = metric.title,
-                                color = contentColor,
-                                fontSize = 13.sp,
-                                fontFamily = getRobotoFlexFont(width = 90f, weight = if (isSelected) 700 else 500)
-                            )
-                        }
-                    }
+                        },
+                        labelProvider = { it.title },
+                        iconProvider = { getMetricIcon(it) }
+                    )
                 }
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
+            // Warning if selected metric is already visible on another cockpit tile
+            val duplicateTileIndices = remember(selectedMetric, allCockpitTiles, slotIndex) {
+                allCockpitTiles.indices.filter { it != slotIndex && allCockpitTiles[it] == selectedMetric }
+            }
 
-            // SECTION 2: DATA SOURCE (ONLY COMPATIBLE SENSORS)
-            Text(
-                text = "DATA SOURCE (${compatibleSources.size} Compatible)",
-                color = MaterialTheme.colorScheme.primary,
-                fontSize = 11.sp,
-                fontFamily = getRobotoFlexFont(width = 100f, weight = 700),
-                letterSpacing = 1.sp
-            )
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            if (compatibleSources.isEmpty()) {
-                Box(
+            if (duplicateTileIndices.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f))
-                        .padding(16.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0xFF2E2010))
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
+                    Icon(
+                        imageVector = Icons.Default.Warning,
+                        contentDescription = "Warning",
+                        tint = Color(0xFFF97316),
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    val tileDesc = if (duplicateTileIndices.size == 1) {
+                        "Tile ${duplicateTileIndices.first() + 1}"
+                    } else {
+                        "Tiles ${duplicateTileIndices.map { it + 1 }.joinToString(", ")}"
+                    }
                     Text(
-                        text = "No compatible sensor paired for ${selectedMetric.title}.\nPair a sensor in Settings.",
-                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        text = "${selectedMetric.title} is already visible on $tileDesc",
+                        color = Color(0xFFFFCC80),
                         fontSize = 13.sp,
-                        fontFamily = getRobotoFlexFont(width = 90f, weight = 400)
+                        fontFamily = getRobotoFlexFont(width = 90f, weight = 500)
                     )
                 }
-            } else {
+            }
+
+            // SECTION 2: DATA SOURCE (ONLY WHEN MULTIPLE COMPATIBLE SOURCES EXIST)
+            if (compatibleSources.size > 1) {
+                Spacer(modifier = Modifier.height(24.dp))
+
+                Text(
+                    text = "DATA SOURCE (${compatibleSources.size} Compatible)",
+                    color = MaterialTheme.colorScheme.primary,
+                    fontSize = 11.sp,
+                    fontFamily = getRobotoFlexFont(width = 100f, weight = 700),
+                    letterSpacing = 1.sp
+                )
+
+                Spacer(modifier = Modifier.height(10.dp))
+
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -254,7 +250,10 @@ fun TileCustomizationSheet(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable { selectedSourceId = source.id }
+                                .clickable {
+                                    view.performAppClickHaptic()
+                                    selectedSourceId = source.id
+                                }
                                 .padding(horizontal = 16.dp, vertical = 12.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -328,7 +327,13 @@ fun TileCustomizationSheet(
                     .clip(CircleShape)
                     .background(MaterialTheme.colorScheme.primaryContainer)
                     .clickable {
-                        onSave(selectedMetric, selectedSourceId)
+                        view.performAppClickHaptic()
+                        val effectiveSourceId = if (compatibleSources.size <= 1) {
+                            compatibleSources.firstOrNull()?.id ?: "AUTO"
+                        } else {
+                            selectedSourceId
+                        }
+                        onSave(selectedMetric, effectiveSourceId)
                         onDismiss()
                     },
                 contentAlignment = Alignment.Center
@@ -397,14 +402,3 @@ private fun getCompatibleSources(
     }
 }
 
-private fun getMetricIcon(metric: MetricType): ImageVector {
-    return when (metric) {
-        MetricType.SPEED, MetricType.AVG_SPEED, MetricType.MAX_SPEED -> Icons.Default.Speed
-        MetricType.CADENCE -> Icons.AutoMirrored.Filled.DirectionsBike
-        MetricType.HEART_RATE -> Icons.Default.Favorite
-        MetricType.POWER, MetricType.AVG_POWER, MetricType.MAX_POWER -> Icons.Default.Bolt
-        MetricType.DISTANCE -> Icons.Default.Route
-        MetricType.ELAPSED_TIME -> Icons.Default.HourglassBottom
-        MetricType.ELEVATION -> Icons.Default.Terrain
-    }
-}

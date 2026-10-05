@@ -27,10 +27,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.velo.app.model.RideStatus
 import com.velo.app.ui.theme.getRobotoFlexFont
+import com.velo.app.ui.util.performAppClickHaptic
 
 @Composable
 fun BottomActionControls(
@@ -48,6 +50,7 @@ fun BottomActionControls(
     val onSecondaryContainer = MaterialTheme.colorScheme.onSecondaryContainer
     val errorContainer = MaterialTheme.colorScheme.errorContainer
     val onErrorContainer = MaterialTheme.colorScheme.onErrorContainer
+    val view = LocalView.current
 
     Box(
         modifier = modifier
@@ -66,7 +69,10 @@ fun BottomActionControls(
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = ripple(color = onPrimaryContainer),
-                            onClick = onStartClick
+                            onClick = {
+                                view.performAppClickHaptic()
+                                onStartClick()
+                            }
                         ),
                     contentAlignment = Alignment.Center
                 ) {
@@ -102,7 +108,10 @@ fun BottomActionControls(
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = ripple(color = onSecondaryContainer),
-                            onClick = onPauseClick
+                            onClick = {
+                                view.performAppClickHaptic()
+                                onPauseClick()
+                            }
                         ),
                     contentAlignment = Alignment.Center
                 ) {
@@ -143,7 +152,10 @@ fun BottomActionControls(
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
                                 indication = ripple(color = onErrorContainer),
-                                onClick = onFinishClick
+                                onClick = {
+                                    view.performAppClickHaptic()
+                                    onFinishClick()
+                                }
                             )
                             .padding(horizontal = 24.dp),
                         contentAlignment = Alignment.Center
@@ -178,7 +190,10 @@ fun BottomActionControls(
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
                                 indication = ripple(color = onSecondaryContainer),
-                                onClick = onResumeClick
+                                onClick = {
+                                    view.performAppClickHaptic()
+                                    onResumeClick()
+                                }
                             ),
                         contentAlignment = Alignment.Center
                     ) {
@@ -215,7 +230,10 @@ fun BottomActionControls(
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = ripple(color = onPrimaryContainer),
-                            onClick = onResetClick
+                            onClick = {
+                                view.performAppClickHaptic()
+                                onResetClick()
+                            }
                         ),
                     contentAlignment = Alignment.Center
                 ) {

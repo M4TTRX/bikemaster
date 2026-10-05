@@ -13,8 +13,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -24,12 +26,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.velo.app.model.MetricType
 import com.velo.app.model.RideTelemetry
 import com.velo.app.model.UnitSystem
 import com.velo.app.ui.theme.getRobotoFlexFont
+import com.velo.app.ui.util.performAppClickHaptic
 import java.util.Locale
 
 @Composable
@@ -136,6 +142,8 @@ private fun ConfigurableMetricSlot(
     onLongClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val haptic = LocalHapticFeedback.current
+    val view = LocalView.current
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
     val scale by animateFloatAsState(
@@ -156,19 +164,35 @@ private fun ConfigurableMetricSlot(
             .combinedClickable(
                 interactionSource = interactionSource,
                 indication = null,
-                onLongClick = onLongClick,
-                onClick = {}
+                onLongClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onLongClick()
+                },
+                onClick = {
+                    view.performAppClickHaptic()
+                }
             )
             .padding(vertical = 4.dp),
         horizontalAlignment = Alignment.Start
     ) {
-        Text(
-            text = metricType.title.uppercase(Locale.US),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            fontSize = 11.sp,
-            fontFamily = getRobotoFlexFont(width = 100f, weight = 600),
-            letterSpacing = 1.sp
-        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(5.dp)
+        ) {
+            Icon(
+                imageVector = getMetricIcon(metricType),
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(13.dp)
+            )
+            Text(
+                text = metricType.title.uppercase(Locale.US),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 11.sp,
+                fontFamily = getRobotoFlexFont(width = 100f, weight = 600),
+                letterSpacing = 1.sp
+            )
+        }
 
         Row(
             verticalAlignment = Alignment.Bottom
@@ -213,8 +237,12 @@ private fun formatMetric(
             Pair(formatted, "rpm")
         }
         MetricType.HEART_RATE -> {
-            val formatted = if (telemetry.heartRateBpm > 0) telemetry.heartRateBpm.toString() else "--"
-            Pair(formatted, "bpm")
+            if (!telemetry.isHeartRateConnected) {
+                Pair("--", "")
+            } else {
+                val formatted = if (telemetry.heartRateBpm > 0) telemetry.heartRateBpm.toString() else "--"
+                Pair(formatted, "bpm")
+            }
         }
         MetricType.POWER -> {
             val formatted = if (telemetry.powerWatts > 0) telemetry.powerWatts.toString() else "--"
