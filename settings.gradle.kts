@@ -19,6 +19,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "velo"
+rootProject.name = "bikemaster"
 include(":app")
 include(":wear")
